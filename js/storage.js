@@ -404,4 +404,4 @@ function renderScripts() {
 }
 
 
-export { loadCode, saveCode, DEFAULT_CODE, getCsvDatasets, saveCsvDatasets, getCsvInjectionCode, openCsvModal, closeCsvModal, saveCsvFromModal, renderCsvList, suggestCsvKey, copyCsvImport, loadScripts, saveScripts, openScriptModal, closeScriptModal, saveScript, deleteScript, copyScriptCode, confirmDeleteScript, formatScriptDate, renderScripts };
+export { loadCode, saveCode, DEFAULT_CODE, getCsvDatasets, saveCsvDatasets, getCsvInjectionCode, openCsvModal, closeCsvModal, saveCsvFromModal, renderCsvList, suggestCsvKey, copyCsvImport, deleteCsvDataset, loadScripts, saveScripts, openScriptModal, closeScriptModal, saveScript, deleteScript, copyScriptCode, confirmDeleteScript, formatScriptDate, renderScripts };
