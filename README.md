@@ -78,9 +78,7 @@ altere i para i+1 enquanto i<10
 
 ### Funções
 ```
-defina dobrar como funcao(x)
-  execute x * 2
-
+defina dobrar como funcao(x) execute x * 2
 apresente rodar(execute dobrar(6)) em apresentação
 ```
 
