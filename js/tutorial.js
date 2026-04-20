@@ -229,7 +229,7 @@ defina altura como 1.75    # m — mude para a sua
 
 # Função de cálculo
 defina calcularIMC como funcao(p, a) execute p / (a * a)
-defina classificar como funcao(imc) execute Abaixo do peso se imc < 18.5 senao Peso normal se imc < 25 senao Sobrepeso
+defina classificar como funcao(imc) execute 'Abaixo do peso' se imc < 18.5 senao rodar(execute 'Peso normal' se imc < 25 senao 'Sobrepeso')
 
 # Resultado
 defina resultado como rodar(execute calcularIMC(peso, altura))
