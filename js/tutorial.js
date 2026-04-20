@@ -109,7 +109,7 @@ Escreva um programa com pelo menos 3 variáveis e 3 comentários explicando o qu
         <button class="copy-btn" onclick="copyCode(this)">Copiar</button>
         <div class="example-label">Exemplo</div>
         <pre>defina titulo como Relatório Mensal
-defina resumo como Os dados mostram crescimento consistente
+defina resumo como 'Os dados mostram crescimento consistente'
 
 apresente titulo em destaque
 apresente resumo em texto
