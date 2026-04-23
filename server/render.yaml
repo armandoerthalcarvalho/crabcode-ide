@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: crabcode-api
+    runtime: node
+    region: oregon
+    plan: free
+    rootDir: server
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DB_PATH
+        value: /data/data.db
+    disk:
+      name: crabcode-db
+      mountPath: /data
+      sizeGB: 1
