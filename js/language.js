@@ -3204,6 +3204,39 @@ class Runtime {
 // ==================== CRAB LIBRARY REGISTRY ====================
 const CrabLibRegistry = {
   official: {
+    // ── interface (EMBUTIDO) ──────────────────────────────────
+    interface: {
+      key: 'interface',
+      title: '🎨 Interface Visual',
+      description: 'Módulo embutido especial. Ativa o modo de interface interativa: tela visual, sprites, elementos interativos (botao, toggle, slider, seletor, digite, pergunte), teclado e persistência de estado entre re-execuções.',
+      isBuiltin: true,
+      selo: 'estrelada',
+      exports: [],
+      functions: [
+        { name: 'execute cor de fundo R G B', params: 'R, G, B', desc: 'Define a cor de fundo da tela (RGB 0–255)' },
+        { name: 'execute cor de texto R G B', params: 'R, G, B', desc: 'Define a cor padrão de texto (RGB 0–255)' },
+        { name: 'apresente V em ... ajuste POS TAM', params: 'pos, tam', desc: 'Posiciona elemento: esquerda/centro/direita, tamanho ppp…ggg' },
+        { name: 'apresente V em ... grid COL LIN W H', params: 'col, lin, w, h', desc: 'Posição absoluta em grid 12×12' },
+        { name: 'defina X como sprite reto(pontos) com cor R G B', params: '...', desc: 'Polígono SVG por pontos normalizados 0–100' },
+        { name: 'defina X como sprite curvo(raio) com cor R G B', params: 'raio', desc: 'Círculo SVG com raio 1–50' },
+        { name: 'defina X como sprite "chave"', params: 'chave', desc: 'Imagem de pixel art criada na aba Imagens' },
+        { name: 'defina X como funcao botao("label") execute EXPR', params: '...', desc: 'Botão clicável. .valor = resultado da última execução' },
+        { name: 'defina X como funcao toggle("label")', params: 'label', desc: 'Interruptor on/off. .valor = verdadeiro/falso' },
+        { name: 'defina X como funcao slider("label", MIN, MAX)', params: 'label, min, max', desc: 'Controle deslizante. .valor = número atual' },
+        { name: 'defina X como funcao seletor("label", op1, op2...)', params: '...', desc: 'Lista de opções. .valor = opção selecionada' },
+        { name: 'defina X como funcao digite("placeholder")', params: 'placeholder', desc: 'Campo de texto livre. .valor = texto digitado' },
+        { name: 'defina X como funcao pergunte("pergunta")', params: 'pergunta', desc: 'Prompt com OK. .valor = resposta confirmada' },
+        { name: 'tecla.valor', params: '', desc: 'Última tecla pressionada (persiste entre execuções)' },
+        { name: 'tecla.atual', params: '', desc: 'Tecla deste frame. Limpa após cada re-execução' },
+        { name: 'salve local X', params: 'X', desc: 'Grava X em localStorage' },
+        { name: 'carregue local X', params: 'X', desc: 'Lê X de localStorage' },
+        { name: 'salve nuvem X usando "chave"', params: 'X, chave', desc: 'POST valor para a API CrabCode em nuvem' },
+        { name: 'carregue nuvem X usando "chave"', params: 'X, chave', desc: 'GET valor da API CrabCode em nuvem' },
+      ],
+      jsCode: '',
+      example: `importe interface\n\nexecute cor de fundo 15 20 40\n\ndefina n como 0\ncarregue local n\n\ndefina btn como funcao botao("+1") execute n + 1\napresente btn em botao ajuste centro m\n\naltere n para btn.valor\nsalve local n\n\napresente "Contagem: " + n em destaque ajuste centro g`,
+    },
+
     // ── formulas_fisica (META) ───────────────────────────────
     formulas_fisica: {
       key: 'formulas_fisica',

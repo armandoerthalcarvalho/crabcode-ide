@@ -1700,6 +1700,16 @@ function loadDocs() {
           <li><a href="#equivalencia-js" style="color:var(--color-azul)">Tabela de Equivalência JS</a></li>
           <li><a href="#limitacoes" style="color:var(--color-azul)">Limitações Conhecidas</a></li>
         </ol>
+        <p><strong>Parte IV — Interface Visual e Persistência</strong></p>
+        <ol start="22">
+          <li><a href="#iface-modo" style="color:var(--color-azul)">Modo Interface</a></li>
+          <li><a href="#iface-posicao" style="color:var(--color-azul)">Posicionamento: Ajuste e Grid</a></li>
+          <li><a href="#iface-sprites" style="color:var(--color-azul)">Sprites Gráficos</a></li>
+          <li><a href="#iface-elementos" style="color:var(--color-azul)">Elementos Interativos</a></li>
+          <li><a href="#iface-tecla" style="color:var(--color-azul)">Teclado (tecla)</a></li>
+          <li><a href="#iface-persistencia" style="color:var(--color-azul)">Persistência: salve e carregue</a></li>
+          <li><a href="#iface-imagens" style="color:var(--color-azul)">Pixel Art e Imagens</a></li>
+        </ol>
       </div>
 
       <!-- ═══════════════════════════════════════════════════════════════ -->
@@ -1910,6 +1920,10 @@ execute imc(78, 1.75) # → 25.47...</pre></div>
 execute fatorial(8)
 execute fibonacci(10)
 apresente raiz_quadrada(144) em destaque</pre></div>
+      <p>O módulo embutido especial <code>interface</code> ativa o <a href="#iface-modo">modo interface visual</a>. Diferente das bibliotecas normais, ele não injeta funções: transforma todo o comportamento de output e habilita <code>tecla</code>, <code>sprite</code>, elementos interativos e persistência de estado.</p>
+      <div class="example-box"><pre>importe interface      # ativa modo interface (não é uma biblioteca comum)
+execute cor de fundo 10 20 40
+apresente "Olá!" em destaque ajuste centro m</pre></div>
 
       <!-- ═══════════════════════════════════════════════════════════════ -->
       <h2 id="rodar">6. Composição com rodar()</h2>
@@ -2682,6 +2696,15 @@ apresente rel em grafico</pre></div>
         <tr><td><code>lista(1)</code></td><td><code>lista[0]</code> — offset -1</td></tr>
         <tr><td><code>obj.prop</code></td><td><code>obj.prop</code></td></tr>
         <tr><td><code>x = y</code> (em condição)</td><td><code>x === y</code></td></tr>
+        <tr><td colspan="2" style="background:var(--bg-secondary);font-weight:600">Modo Interface (<code>importe interface</code>)</td></tr>
+        <tr><td><code>apresente x em destaque [ajuste]</code></td><td><code>__iface_output.push({type:'destaque',value:x,pos:...});</code></td></tr>
+        <tr><td><code>execute cor de fundo R G B</code></td><td><code>__iface_output.push({type:'cor_de_fundo',r:R,g:G,b:B});</code></td></tr>
+        <tr><td><code>defina X como funcao botao("L") execute E</code></td><td><code>__iface_output.push({type:'botao',label:'L',expr:()=&gt;E,elemKey:'X'});</code></td></tr>
+        <tr><td><code>defina X como sprite reto(...) com cor R G B</code></td><td><code>window.__ccSprites['X']={type:'reto',points:[...],r:R,g:G,b:B}</code></td></tr>
+        <tr><td><code>salve local X</code></td><td><code>localStorage.setItem('crabcode_local_X', JSON.stringify(X));</code></td></tr>
+        <tr><td><code>carregue local X</code></td><td><code>X = JSON.parse(localStorage.getItem('crabcode_local_X'));</code></td></tr>
+        <tr><td><code>salve nuvem X usando "k"</code></td><td><code>await fetch('https://crabcode-api.onrender.com/save/k', {method:'POST',body:JSON.stringify(X)})</code></td></tr>
+        <tr><td><code>carregue nuvem X usando "k"</code></td><td><code>X = await fetch('.../load/k').then(r=&gt;r.json())</code></td></tr>
       </table>
 
       <h2 id="limitacoes">21. Limitações Conhecidas</h2>
@@ -2694,12 +2717,201 @@ apresente rel em grafico</pre></div>
         <tr><td>Guard de 10.000 iterações</td><td><code>enquanto</code> para após 10.000 repetições</td></tr>
         <tr><td>Strings não escapam aspas</td><td>Usar tipo alternativo de aspa</td></tr>
         <tr><td>localStorage limitado</td><td>~5MB para scripts, libs personalizadas e CSVs</td></tr>
-        <tr><td>Sem I/O externo</td><td>Sem acesso a rede, sistema de arquivos ou APIs externas</td></tr>
+        <tr><td>I/O externo limitado</td><td>Acesso a rede disponível via <code>salve/carregue nuvem</code>. Sem acesso ao sistema de arquivos.</td></tr>
+        <tr><td>Estado de interface é por sessão</td><td><code>__ccState</code> persiste entre re-execuções na mesma aba, mas é limpo ao fechar o navegador (use <code>salve local</code> para persistir)</td></tr>
+        <tr><td>Interface: sem animação nativa</td><td>O modo interface re-renderiza completamente a cada execução. Animações devem ser feitas via loop com re-execução por evento.</td></tr>
       </table>
 
+      <!-- ╔══════════════════════════════════════════════════════════════╗ -->
+      <!-- ║           PARTE IV — INTERFACE VISUAL E PERSISTÊNCIA        ║ -->
+      <!-- ╚══════════════════════════════════════════════════════════════╝ -->
+
+      <h1 style="border-top:2px solid var(--color-azul);padding-top:20px;margin-top:32px;">Parte IV — Interface Visual e Persistência</h1>
+
+      <!-- ─── 22. Modo Interface ─────────────────────────────────────── -->
+      <h2 id="iface-modo">22. Modo Interface — <code>importe interface</code></h2>
+      <p>Ao importar o módulo embutido <strong>interface</strong>, o interpretador entra em <em>modo interface</em>: o painel de output é substituído por uma tela de posicionamento livre, e todos os outputs são renderizados como elementos visuais HTML.</p>
+      <table>
+        <tr><th>Diferença</th><th>Modo STEM (padrão)</th><th>Modo Interface</th></tr>
+        <tr><td>Buffer de output</td><td><code>__output</code></td><td><code>__iface_output</code></td></tr>
+        <tr><td>Renderização</td><td><code>OutputRenderer</code></td><td><code>InterfaceRenderer</code></td></tr>
+        <tr><td>Estado entre re-execuções</td><td>Sem estado</td><td><code>window.__ccState</code> (objeto persistente)</td></tr>
+        <tr><td>Variáveis com <code>defina</code></td><td>Sempre reinicializam</td><td>Persistem em <code>__ccState</code> se já inicializadas</td></tr>
+        <tr><td>Teclado</td><td>Não disponível</td><td><code>tecla.valor</code> e <code>tecla.atual</code></td></tr>
+        <tr><td>Sprites</td><td>Não disponível</td><td><code>defina X como sprite ...</code></td></tr>
+        <tr><td>Elementos interativos</td><td>Não disponível</td><td><code>defina X como funcao botao(...)</code></td></tr>
+      </table>
+      <div class="tip"><strong>Mecanismo de re-execução:</strong> Quando o usuário interage com qualquer elemento (clica num botão, move um slider etc.), o CrabCode re-executa automaticamente o código inteiro. As variáveis declaradas com <code>defina</code> não são reinicializadas — elas leem o valor atual de <code>__ccState</code>.</div>
+      <div class="example-box"><pre>importe interface
+
+execute cor de fundo 15 20 40
+
+defina titulo como "Bem-vindo!"
+apresente titulo em destaque ajuste centro m</pre></div>
+
+      <!-- ─── 23. Posicionamento ────────────────────────────────────── -->
+      <h2 id="iface-posicao">23. Posicionamento: Módulo Amarelo</h2>
+      <p>O módulo amarelo (<code>ajuste</code>, <code>grid</code>, <code>cor de texto</code>, <code>cor de fundo</code>) controla a aparência e o layout dos elementos de interface.</p>
+
+      <h3>23.1 execute cor de fundo R G B</h3>
+      <p>Define a cor de fundo de toda a tela usando valores RGB (0–255). Pode ser colocado em qualquer ponto do código — a cor é aplicada durante a renderização.</p>
+      <div class="example-box"><pre>execute cor de fundo 20 30 60   # azul escuro
+execute cor de fundo 255 248 220  # creme</pre></div>
+
+      <h3>23.2 ajuste POSIÇÃO TAMANHO</h3>
+      <p>Modificador inline de qualquer <code>apresente ... em ...</code>. Controla posição horizontal e largura do elemento.</p>
+      <table>
+        <tr><th>Posição</th><th>Alinhamento</th></tr>
+        <tr><td><code>esquerda</code></td><td>0–tamanho% da tela</td></tr>
+        <tr><td><code>centroesquerda</code></td><td>20–(20+tam)%</td></tr>
+        <tr><td><code>centro</code></td><td>centralizado</td></tr>
+        <tr><td><code>centrodireita</code></td><td>alinhado à direita do centro</td></tr>
+        <tr><td><code>direita</code></td><td>100-tam% até 100%</td></tr>
+      </table>
+      <table>
+        <tr><th>Tamanho</th><th>Largura</th></tr>
+        <tr><td><code>ppp</code></td><td>5%</td></tr>
+        <tr><td><code>pp</code></td><td>10%</td></tr>
+        <tr><td><code>p</code></td><td>25%</td></tr>
+        <tr><td><code>m</code></td><td>40%</td></tr>
+        <tr><td><code>g</code></td><td>60%</td></tr>
+        <tr><td><code>gg</code></td><td>80%</td></tr>
+        <tr><td><code>ggg</code></td><td>100%</td></tr>
+      </table>
+
+      <h3>23.3 grid COL LIN LARGURA ALTURA</h3>
+      <p>Posicionamento absoluto em grid de 12 colunas. Todos os valores são de 1 a 12.</p>
+      <div class="example-box"><pre>apresente "Painel A" em texto grid 1 1 4 3
+apresente "Painel B" em texto grid 5 1 8 3</pre></div>
+
+      <h3>23.4 cor de texto R G B (modificador inline)</h3>
+      <p>Define a cor do texto do elemento. Usado em <code>apresente ... em texto cor de texto R G B</code>.</p>
+      <div class="example-box"><pre>apresente "Alerta!" em texto ajuste centro m cor de texto 255 80 80</pre></div>
+
+      <!-- ─── 24. Sprites ───────────────────────────────────────────── -->
+      <h2 id="iface-sprites">24. Sprites Gráficos</h2>
+      <p>Sprites são formas visuais definidas uma vez e reutilizadas como valores. São registrados em <code>window.__ccSprites</code> e persistem entre re-execuções.</p>
+
+      <h3>24.1 Sintaxe geral</h3>
+      <div class="example-box"><pre>defina NOME como sprite TIPO(...) com cor R G B
+apresente NOME em sprite [ajuste POSIÇÃO TAMANHO]</pre></div>
+
+      <h3>24.2 reto — Polígono</h3>
+      <p>Define polígono por lista de pontos <code>X Y</code> separados por vírgula. Coordenadas são em espaço 0–100 (normalizadas).</p>
+      <div class="example-box"><pre>defina seta como sprite reto(0 50, 60 0, 60 30, 100 30, 100 70, 60 70, 60 100) com cor 100 180 255
+apresente seta em sprite ajuste centro g</pre></div>
+
+      <h3>24.3 curvo — Círculo</h3>
+      <p>Define círculo pelo raio (1–50). Renderizado como SVG <code>&lt;circle&gt;</code>.</p>
+      <div class="example-box"><pre>defina bola como sprite curvo(50) com cor 255 200 60
+apresente bola em sprite ajuste centrodireita m</pre></div>
+
+      <h3>24.4 Imagem de pixel art</h3>
+      <p>Referencia uma imagem criada na aba <strong>Imagens</strong> pelo nome da chave.</p>
+      <div class="example-box"><pre>defina nave como sprite "nave"   # chave criada no editor de pixel art
+apresente nave em sprite ajuste centro m</pre></div>
+
+      <!-- ─── 25. Elementos Interativos ─────────────────────────────── -->
+      <h2 id="iface-elementos">25. Elementos Interativos</h2>
+      <p>Elementos interativos são definidos com <code>defina NOME como funcao TIPO("rótulo", ...args)</code> e apresentados com <code>apresente NOME em TIPO</code>. Cada elemento expõe a propriedade <code>.valor</code> que reflete o estado atual do controle.</p>
+      <table>
+        <tr><th>Tipo</th><th>Sintaxe</th><th><code>.valor</code></th><th>Trigger de re-execução</th></tr>
+        <tr><td><code>botao</code></td><td><code>funcao botao("rótulo") execute EXPR</code></td><td>Resultado da última execução</td><td>Clique</td></tr>
+        <tr><td><code>toggle</code></td><td><code>funcao toggle("rótulo")</code></td><td><code>verdadeiro</code> / <code>falso</code></td><td>Clique</td></tr>
+        <tr><td><code>slider</code></td><td><code>funcao slider("rótulo", MIN, MAX)</code></td><td>Número atual</td><td>Arrastar</td></tr>
+        <tr><td><code>seletor</code></td><td><code>funcao seletor("rótulo", "op1", "op2", ...)</code></td><td>Opção selecionada (string)</td><td>Seleção</td></tr>
+        <tr><td><code>digite</code></td><td><code>funcao digite("placeholder")</code></td><td>Texto digitado</td><td>Digitação</td></tr>
+        <tr><td><code>pergunte</code></td><td><code>funcao pergunte("pergunta")</code></td><td>Resposta ao clicar OK</td><td>Clique em OK</td></tr>
+      </table>
+      <div class="example-box"><pre>importe interface
+
+defina volume como funcao slider("Volume", 0, 100)
+apresente volume em slider ajuste centro g
+
+defina cor como funcao seletor("Cor", "Vermelho", "Verde", "Azul")
+apresente cor em seletor ajuste centro m
+
+apresente "Volume: " + volume.valor + "% | Cor: " + cor.valor em destaque</pre></div>
+
+      <!-- ─── 26. Teclado ───────────────────────────────────────────── -->
+      <h2 id="iface-tecla">26. Teclado — <code>tecla</code></h2>
+      <p>A variável <code>tecla</code> é injetada automaticamente ao importar <code>interface</code>. Ela é um objeto com duas propriedades:</p>
+      <table>
+        <tr><th>Propriedade</th><th>Tipo</th><th>Descrição</th></tr>
+        <tr><td><code>tecla.valor</code></td><td>string</td><td>Última tecla pressionada (persiste entre re-execuções)</td></tr>
+        <tr><td><code>tecla.atual</code></td><td>string</td><td>Tecla pressionada exatamente neste frame. Limpa-se após cada re-execução.</td></tr>
+      </table>
+      <p>Os valores de tecla seguem a convenção <code>KeyboardEvent.key</code>: <code>"ArrowLeft"</code>, <code>"ArrowRight"</code>, <code>"ArrowUp"</code>, <code>"ArrowDown"</code>, <code>" "</code> (espaço), <code>"Enter"</code>, letras e números como strings.</p>
+      <div class="example-box"><pre>importe interface
+
+execute cor de fundo 10 10 30
+
+defina x como 50
+se tecla.atual = "ArrowRight"
+  altere x para x + 5
+se tecla.atual = "ArrowLeft"
+  altere x para x - 5
+
+apresente "posição: " + x em texto ajuste centro m
+apresente "tecla: " + tecla.valor em texto ajuste centro p</pre></div>
+      <div class="tip">O evento de teclado é ouvido na janela principal (<code>window</code>). O canvas de interface precisa estar visível. Para uso intensivo (jogos), prefira <code>tecla.atual</code> em vez de <code>tecla.valor</code>.</div>
+
+      <!-- ─── 27. Persistência ──────────────────────────────────────── -->
+      <h2 id="iface-persistencia">27. Persistência: <code>salve</code> e <code>carregue</code></h2>
+      <p>CrabCode oferece dois mecanismos de persistência, independentes do modo interface:</p>
+
+      <h3>27.1 Local — <code>localStorage</code> do navegador</h3>
+      <p>Dados gravados localmente no dispositivo. Persistem entre sessões, mas não entre dispositivos.</p>
+      <table>
+        <tr><th>Sintaxe</th><th>Ação</th></tr>
+        <tr><td><code>salve local X</code></td><td>Grava o valor de X em <code>localStorage["crabcode_local_X"]</code></td></tr>
+        <tr><td><code>carregue local X</code></td><td>Lê de <code>localStorage</code> e atribui à variável X</td></tr>
+      </table>
+      <div class="example-box"><pre>defina pontos como 0
+carregue local pontos           # lê o valor salvo anteriormente
+
+altere pontos para pontos + 10
+
+salve local pontos              # persiste para a próxima execução
+execute "Pontuação: " + pontos</pre></div>
+
+      <h3>27.2 Nuvem — API CrabCode</h3>
+      <p>Dados gravados no servidor CrabCode em nuvem. Acessíveis de qualquer dispositivo com a mesma chave.</p>
+      <table>
+        <tr><th>Sintaxe</th><th>Ação</th></tr>
+        <tr><td><code>salve nuvem X usando "chave"</code></td><td>POST <code>/save/chave</code> com o valor de X</td></tr>
+        <tr><td><code>carregue nuvem X usando "chave"</code></td><td>GET <code>/load/chave</code> e atribui à variável X</td></tr>
+      </table>
+      <p>A chave deve conter apenas letras, números, hífens e sublinhados (máx. 64 caracteres). Qualquer pessoa que conheça a chave pode acessar os dados — use chaves únicas para dados privados.</p>
+      <div class="example-box"><pre>defina ranking como 0
+carregue nuvem ranking usando "meu-projeto-ranking-2025"
+
+altere ranking para ranking + 1
+
+salve nuvem ranking usando "meu-projeto-ranking-2025"
+execute "Ranking: " + ranking</pre></div>
+      <div class="tip"><strong>Operações assíncronas:</strong> <code>carregue nuvem</code> e <code>salve nuvem</code> usam <code>await fetch()</code> internamente. O código é executado em uma função <code>async</code>, portanto a ordem das operações é preservada.</div>
+
+      <!-- ─── 28. Pixel Art e Imagens ───────────────────────────────── -->
+      <h2 id="iface-imagens">28. Pixel Art e Imagens</h2>
+      <p>A aba <strong>Imagens</strong> da IDE oferece um editor de pixel art embutido. As imagens criadas são salvas em <code>localStorage</code> e podem ser usadas como sprites em interfaces.</p>
+      <h3>Fluxo de uso</h3>
+      <ol>
+        <li>Acesse a aba <strong>Imagens</strong> e clique em <strong>+ Nova Imagem</strong></li>
+        <li>Digite uma chave (ex: <code>nave</code>), escolha o tamanho da grade (8×8, 16×16 ou 32×32)</li>
+        <li>Desenhe usando as ferramentas: pincel, borracha, balde de tinta</li>
+        <li>Clique em <strong>Salvar Imagem</strong></li>
+        <li>No código, referencie pelo nome da chave:</li>
+      </ol>
+      <div class="example-box"><pre>importe interface
+
+defina personagem como sprite "nave"   # chave registrada no editor
+apresente personagem em sprite ajuste centro m</pre></div>
+      <p>Os pixels são armazenados como array RGBA de <code>size × size</code> células. A renderização usa um <code>&lt;canvas&gt;</code> com <code>image-rendering: pixelated</code> para preservar o estilo retro.</p>
+
       <div style="text-align:center;margin-top:2em;padding:1em;border-top:1px solid var(--border);color:var(--text-muted);font-size:0.9em;">
-        <img src="assets/crabcode_logo.png" alt="CrabCode" style="height:1em;vertical-align:middle;margin-right:4px;">CrabCode — Linguagem educacional em português brasileiro<br>
-        Documentação gerada automaticamente a partir do código-fonte do interpretador.
+        <img src="assets/crabcode_logo.png" alt="CrabCode" style="height:1em;vertical-align:middle;margin-right:4px;">CrabCode — Linguagem educacional em português brasileiro · v2.0<br>
+        Documentação técnica completa · Atualizada em Abril de 2026
       </div>
 
     </div>
