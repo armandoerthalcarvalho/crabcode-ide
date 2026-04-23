@@ -1973,7 +1973,7 @@ defina msg como indo para casa   # → "indo para casa"</pre></div>
       <!-- ╚══════════════════════════════════════════════════════════════╝ -->
 
       <h2 id="sistema-libs">9. Sistema de Bibliotecas</h2>
-      <p>O CrabCode possui um extenso ecossistema de <strong>65+ bibliotecas oficiais</strong> cobrindo matemática, ciências, engenharia, finanças, utilidades e muito mais. As bibliotecas são importadas com <code>importe nome_da_biblioteca</code> e disponibilizam funções prontas para uso imediato.</p>
+      <p>O CrabCode possui um extenso ecossistema de <strong>84 bibliotecas oficiais</strong> cobrindo matemática, ciências, engenharia, finanças, utilidades e muito mais, além do módulo embutido especial <code>interface</code>. As bibliotecas são importadas com <code>importe nome_da_biblioteca</code> e disponibilizam funções prontas para uso imediato.</p>
       <p><strong>Selos de qualidade:</strong></p>
       <table>
         <tr><th>Selo</th><th>Significado</th></tr>
@@ -2628,14 +2628,17 @@ execute simpson(funcao(x) retorne x*x fim, 0, 1, 100)</pre></div>
 
       <!-- ═══════════════════════════════════════════════════════════════ -->
       <h2 id="meta-libs">16. Meta-Bibliotecas</h2>
-      <p>Meta-bibliotecas importam múltiplas bibliotecas com um único comando, ideal para projetos que abrangem várias áreas.</p>
+      <p>Meta-bibliotecas importam múltiplas bibliotecas com um único comando, ideal para projetos que abrangem várias áreas. O CrabCode possui <strong>8 meta-bibliotecas</strong> no total.</p>
       <table>
-        <tr><th>Meta-Biblioteca</th><th>Inclui</th></tr>
-        <tr><td><code>biblioteca_geral</code></td><td>física mecânica, finanças, conversões, matemática, estatística, geometria, progressões, números, trigonometria, esportes, culinária, logística</td></tr>
-        <tr><td><code>biblioteca_ciencias</code></td><td>física completa (7), química completa (5), biologia completa (5), astronomia, eletricidade, álgebra linear, eletroquímica, bioquímica</td></tr>
-        <tr><td><code>biblioteca_utilidades</code></td><td>texto, validação BR, datas, cores, combustível, lógica, culinária, esportes</td></tr>
-        <tr><td><code>biblioteca_matematica_completa</code></td><td>matemática, geometria, progressões, números, álgebra linear, probabilidade, estatística, trigonometria, combinatória, complexos, sequências, conjuntos, discreta, grafos</td></tr>
-        <tr><td><code>biblioteca_financeira_completa</code></td><td>finanças, investimentos, economia, finanças BR, contabilidade, marketing digital, logística, financeira avançada</td></tr>
+        <tr><th>Meta-Biblioteca</th><th>Libs incluídas</th><th>Total de funções</th></tr>
+        <tr><td><code>formulas_fisica</code></td><td>fisica_mecanica, fisica_termodinamica, fisica_optica, fisica_fluidos, fisica_gravitacao, fisica_eletromagnetismo, fisica_moderna, fisica_ondas</td><td>~80</td></tr>
+        <tr><td><code>formulas_quimica</code></td><td>quimica_solucoes, quimica_gases, quimica_termica, quimica_organica, quimica_nuclear</td><td>~50</td></tr>
+        <tr><td><code>formulas_biologia</code></td><td>bio_fisiologia, bio_genetica, bio_ecologia, bio_microbiologia, bio_evolucao</td><td>~50</td></tr>
+        <tr><td><code>biblioteca_geral</code></td><td>fisica_mecanica, formulas_financas, conversoes, matematica, estatistica_avancada, geometria, progressoes, numeros, trigonometria, esportes, culinaria, logistica</td><td>~120</td></tr>
+        <tr><td><code>biblioteca_ciencias</code></td><td>formulas_fisica, formulas_quimica, formulas_biologia, astronomia, formulas_eletrica, algebra_linear, eletroquimica, bioquimica</td><td>~200</td></tr>
+        <tr><td><code>biblioteca_utilidades</code></td><td>texto, validacao, datas, cores, combustivel, logica, culinaria, esportes</td><td>~80</td></tr>
+        <tr><td><code>biblioteca_matematica_completa</code></td><td>matematica, geometria, progressoes, numeros, algebra_linear, probabilidade, estatistica_avancada, trigonometria, combinatoria, numeros_complexos, sequencias, conjuntos, matematica_discreta, teoria_grafos</td><td>~140</td></tr>
+        <tr><td><code>biblioteca_financeira_completa</code></td><td>formulas_financas, investimentos, formulas_economia, financas_br, formulas_contabilidade, marketing_digital, logistica, matematica_financeira_avancada</td><td>~80</td></tr>
       </table>
       <div class="example-box"><pre>importe biblioteca_ciencias
 # Agora TODAS as funções de física, química e biologia estão disponíveis!
