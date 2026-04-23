@@ -1,5 +1,8 @@
 ﻿// js/language.js
 // CrabCode language engine: TokenDef, Lexer, Parser, Transpiler, Runtime, CrabLibRegistry
+// ==================== CONSTANTS ====================
+const CRABCODE_CLOUD_URL = 'https://crabcode-api.onrender.com';
+
 // ==================== TOKEN DEFINITIONS ====================
 const TokenDef = {
   // Module colors
@@ -64,6 +67,35 @@ const TokenDef = {
 
     // Vermelho (Special)
     RODAR: { word: 'rodar', module: 'vermelho' },
+
+    // Laranja additions — salve/carregue
+    SALVE:    { word: 'salve',    module: 'laranja' },
+    CARREGUE: { word: 'carregue', module: 'laranja' },
+
+    // Roxo additions — local/nuvem/usando (context-sensitive)
+    LOCAL:  { word: 'local',  module: 'roxo' },
+    NUVEM:  { word: 'nuvem',  module: 'roxo' },
+    USANDO: { word: 'usando', module: 'roxo' },
+
+    // Amarelo additions — interface layout (context-sensitive: only in interface mode)
+    AJUSTE:       { word: 'ajuste',       module: 'amarelo' },
+    GRID:         { word: 'grid',         module: 'amarelo' },
+    COR_AMARELO:  { word: 'cor',          module: 'amarelo' },
+    COR_DE_TEXTO: { word: 'cor de texto', module: 'amarelo' },
+    COR_DE_FUNDO: { word: 'cor de fundo', module: 'amarelo' },
+
+    // Azul additions — sprites (context-sensitive: only in interface mode)
+    SPRITE: { word: 'sprite', module: 'azul' },
+    RETO:   { word: 'reto',   module: 'azul' },
+    CURVO:  { word: 'curvo',  module: 'azul' },
+
+    // Azul additions — interactive elements (context-sensitive: only in interface mode)
+    BOTAO:   { word: 'botao',   module: 'azul' },
+    TOGGLE:  { word: 'toggle',  module: 'azul' },
+    SLIDER:  { word: 'slider',  module: 'azul' },
+    SELETOR: { word: 'seletor', module: 'azul' },
+    DIGITE:  { word: 'digite',  module: 'azul' },
+    PERGUNTE: { word: 'pergunte', module: 'azul' },
   },
 
   // Characters that are always errors
@@ -182,6 +214,13 @@ class Lexer {
           this.declaredArrays.add(col.name);
         }
       }
+    }
+
+    // Detect interface mode: importe interface
+    this._interfaceMode = /^\s*importe\s+interface\s*(?:#.*)?$/im.test(preSource);
+    if (this._interfaceMode) {
+      // Inject system vars so validation passes
+      this.declaredVars.add('tecla');
     }
 
     while (this.pos < this.source.length) {
@@ -324,6 +363,8 @@ class Lexer {
           { key: 'JUROS_COMPOSTOS', word: 'juros compostos' },
           { key: 'PERCENTIL_DE', word: 'percentil de' },
           { key: 'TAMANHO_DE', word: 'tamanho de' },
+          { key: 'COR_DE_TEXTO', word: 'cor de texto' },
+          { key: 'COR_DE_FUNDO', word: 'cor de fundo' },
         ];
 
         let matched = false;
@@ -338,6 +379,10 @@ class Lexer {
                 if (this.tokens[i].type === 'COMO') hasComo = true;
               }
               if (!hasDefina || !hasComo) continue;
+            }
+            // Amarelo multi-word tokens — only in interface mode
+            if (mk.key === 'COR_DE_TEXTO' || mk.key === 'COR_DE_FUNDO') {
+              if (!this._interfaceMode) continue;
             }
             const val = this.source.substring(this.pos, this.pos + mk.word.length);
             this.tokens.push({
@@ -497,6 +542,70 @@ class Lexer {
                 break;
               }
               continue;
+            }
+            // 'local' is special — only roxo when SALVE or CARREGUE is on same line
+            if (key === 'LOCAL') {
+              let hasSalveCarregue = false;
+              for (let i = this.tokens.length - 1; i >= 0; i--) {
+                if (this.tokens[i].type === 'NEWLINE') break;
+                if (this.tokens[i].type === 'SALVE' || this.tokens[i].type === 'CARREGUE') { hasSalveCarregue = true; break; }
+              }
+              if (hasSalveCarregue) {
+                this.tokens.push({ type: key, value: word, module: def.module, line: startLine, col: startCol });
+                found = true;
+                break;
+              }
+              continue;
+            }
+            // 'nuvem' is special — only roxo when SALVE or CARREGUE is on same line
+            if (key === 'NUVEM') {
+              let hasSalveCarregue = false;
+              for (let i = this.tokens.length - 1; i >= 0; i--) {
+                if (this.tokens[i].type === 'NEWLINE') break;
+                if (this.tokens[i].type === 'SALVE' || this.tokens[i].type === 'CARREGUE') { hasSalveCarregue = true; break; }
+              }
+              if (hasSalveCarregue) {
+                this.tokens.push({ type: key, value: word, module: def.module, line: startLine, col: startCol });
+                found = true;
+                break;
+              }
+              continue;
+            }
+            // 'usando' is special — only roxo when NUVEM is on same line
+            if (key === 'USANDO') {
+              let hasNuvem = false;
+              for (let i = this.tokens.length - 1; i >= 0; i--) {
+                if (this.tokens[i].type === 'NEWLINE') break;
+                if (this.tokens[i].type === 'NUVEM') { hasNuvem = true; break; }
+              }
+              if (hasNuvem) {
+                this.tokens.push({ type: key, value: word, module: def.module, line: startLine, col: startCol });
+                found = true;
+                break;
+              }
+              continue;
+            }
+            // Amarelo tokens — only active in interface mode
+            if (key === 'AJUSTE' || key === 'GRID' || key === 'COR_AMARELO' || key === 'COR_DE_FUNDO') {
+              if (!this._interfaceMode) continue;
+            }
+            // COR_DE_TEXTO — only after APRESENTE on same line, in interface mode
+            if (key === 'COR_DE_TEXTO') {
+              if (!this._interfaceMode) continue;
+              let hasApresente = false;
+              for (let i = this.tokens.length - 1; i >= 0; i--) {
+                if (this.tokens[i].type === 'NEWLINE') break;
+                if (this.tokens[i].type === 'APRESENTE') { hasApresente = true; break; }
+              }
+              if (!hasApresente) continue;
+            }
+            // Sprite tokens — only active in interface mode
+            if (key === 'SPRITE' || key === 'RETO' || key === 'CURVO') {
+              if (!this._interfaceMode) continue;
+            }
+            // Interactive element tokens — only active in interface mode
+            if (key === 'BOTAO' || key === 'TOGGLE' || key === 'SLIDER' || key === 'SELETOR' || key === 'DIGITE' || key === 'PERGUNTE') {
+              if (!this._interfaceMode) continue;
             }
             this.tokens.push({ type: key, value: word, module: def.module, line: startLine, col: startCol });
             found = true;
@@ -724,7 +833,11 @@ class Parser {
       this.parseApresente(tokens);
     } else if (first.type === 'IMPORTE') {
       this.parseImporte(tokens);
-    } else if (['COMO', 'PARA', 'EM', 'SE', 'REPITA', 'LOOP', 'COM', 'POTENCIA_DE', 'RAIZ_DE', 'ALEATORIO_ENTRE', 'JUROS_COMPOSTOS', 'PERCENTIL_DE', 'TAMANHO_DE'].includes(first.type)) {
+    } else if (first.type === 'SALVE') {
+      this.parseSalve(tokens);
+    } else if (first.type === 'CARREGUE') {
+      this.parseCarregue(tokens);
+    } else if (['COMO', 'PARA', 'EM', 'SE', 'REPITA', 'LOOP', 'COM', 'POTENCIA_DE', 'RAIZ_DE', 'ALEATORIO_ENTRE', 'JUROS_COMPOSTOS', 'PERCENTIL_DE', 'TAMANHO_DE', 'LOCAL', 'NUVEM', 'USANDO'].includes(first.type)) {
       this.errors.push({
         message: `'${first.value}' é um comando secundário e não pode iniciar uma linha. Use 'defina', 'altere', 'execute', 'apresente' ou 'importe' primeiro.`,
         line: first.line, col: first.col, length: first.value.length
@@ -984,6 +1097,49 @@ class Parser {
         valueTokens,
         line: tokens[0].line
       });
+    } else if (tokens[3].type === 'SPRITE' && this._interfaceMode) {
+      // defina X como sprite reto(x1,y1, x2,y2, ...) — polygon
+      // defina X como sprite curvo(r)              — circle
+      // defina X como sprite KEY                   — pixel art image ref
+      const spriteKindToken = tokens[4];
+      if (!spriteKindToken) {
+        this.errors.push({ message: `'sprite' precisa de 'reto(...)' ou 'curvo(r)' ou o nome de uma imagem`, line: tokens[3].line, col: tokens[3].col, length: tokens[3].value.length });
+        return;
+      }
+      if (spriteKindToken.type === 'RETO') {
+        // Collect numbers inside parens
+        const parenOpen = tokens[5];
+        if (!parenOpen || parenOpen.type !== 'PAREN' || parenOpen.value !== '(') {
+          this.errors.push({ message: `'sprite reto' precisa de pontos entre parênteses. Ex: sprite reto(0,0, 10,0, 5,10)`, line: spriteKindToken.line, col: spriteKindToken.col, length: spriteKindToken.value.length });
+          return;
+        }
+        const nums = [];
+        for (let i = 6; i < tokens.length; i++) {
+          if (tokens[i].type === 'NUMBER') nums.push(Number(tokens[i].value));
+          if (tokens[i].type === 'PAREN' && tokens[i].value === ')') break;
+        }
+        if (nums.length < 6 || nums.length % 2 !== 0) {
+          this.errors.push({ message: `'sprite reto' precisa de pelo menos 3 pontos (6 números). Ex: sprite reto(0,0, 10,0, 5,10)`, line: spriteKindToken.line, col: spriteKindToken.col, length: spriteKindToken.value.length });
+          return;
+        }
+        const points = [];
+        for (let i = 0; i < nums.length; i += 2) points.push([nums[i], nums[i + 1]]);
+        this.ast.push({ type: 'DefineSpriteReto', name: nameToken.value, points, line: tokens[0].line });
+      } else if (spriteKindToken.type === 'CURVO') {
+        const parenOpen = tokens[5];
+        if (!parenOpen || parenOpen.type !== 'PAREN' || parenOpen.value !== '(') {
+          this.errors.push({ message: `'sprite curvo' precisa de um raio. Ex: sprite curvo(5)`, line: spriteKindToken.line, col: spriteKindToken.col, length: spriteKindToken.value.length });
+          return;
+        }
+        const rToken = tokens[6];
+        const radius = rToken && rToken.type === 'NUMBER' ? Number(rToken.value) : 5;
+        this.ast.push({ type: 'DefineSpriteCircle', name: nameToken.value, radius, line: tokens[0].line });
+      } else if (spriteKindToken.type === 'IDENTIFIER') {
+        // Image reference (Phase 14)
+        this.ast.push({ type: 'DefineSpriteImage', name: nameToken.value, imageKey: spriteKindToken.value, line: tokens[0].line });
+      } else {
+        this.errors.push({ message: `'sprite' espera 'reto', 'curvo' ou o nome de uma imagem`, line: spriteKindToken.line, col: spriteKindToken.col, length: spriteKindToken.value.length });
+      }
     } else {
       const valueTokens = tokens.slice(3);
       // Check if it's an array: has comma at root level (outside parens)
@@ -1022,11 +1178,77 @@ class Parser {
     }
   }
 
+  _parseDefinaInteractive(tokens, nameToken, kindToken) {
+    // Extract first string arg if present: funcao botao("texto")
+    const kind = kindToken.type.toLowerCase(); // botao, toggle, slider, seletor, digite, pergunte
+    let labelText = '';
+    let extraArgs = [];
+    let effectTokens = [];
+
+    // Find opening paren after kind token
+    const kindIdx = tokens.indexOf(kindToken);
+    let parenIdx = kindIdx + 1;
+    if (parenIdx < tokens.length && tokens[parenIdx].type === 'PAREN' && tokens[parenIdx].value === '(') {
+      // Collect contents up to closing paren
+      let depth = 1;
+      let inside = [];
+      let j = parenIdx + 1;
+      while (j < tokens.length && depth > 0) {
+        if (tokens[j].type === 'PAREN' && tokens[j].value === '(') { depth++; inside.push(tokens[j]); }
+        else if (tokens[j].type === 'PAREN' && tokens[j].value === ')') {
+          depth--;
+          if (depth === 0) { j++; break; }
+          inside.push(tokens[j]);
+        } else {
+          inside.push(tokens[j]);
+        }
+        j++;
+      }
+      // First STRING token is the label
+      const strToken = inside.find(t => t.type === 'STRING');
+      if (strToken) labelText = strToken.value;
+      // NUMBERs after first comma = extra args (slider: min, max; seletor: options as strings)
+      const extraTokens = inside.filter(t => t.type === 'NUMBER' || t.type === 'STRING');
+      extraArgs = extraTokens.slice(1).map(t => t.value); // skip first (label)
+      // Everything after closing paren = effect body
+      effectTokens = tokens.slice(j);
+    } else {
+      // No parens — effect is everything after kind
+      effectTokens = tokens.slice(kindIdx + 1);
+    }
+
+    this.ast.push({
+      type: 'DefineInteractive',
+      name: nameToken.value,
+      kind,
+      label: labelText,
+      extraArgs,
+      effectTokens,
+      line: tokens[0].line
+    });
+  }
+
   parseDefinaFuncao(tokens, nameToken) {
     // defina NAME como funcao(params) BODY
     // also: defina NAME como funcao BODY  (no-param shorthand)
+    // interface mode: defina NAME como funcao botao("txt") EFFECT...
+    //                 defina NAME como funcao toggle("txt")
+    //                 defina NAME como funcao slider("txt") min, max
+    //                 defina NAME como funcao seletor("txt") op1, op2...
+    //                 defina NAME como funcao digite
+    //                 defina NAME como funcao pergunte("q")
     let i = 3; // at 'funcao'
     const funcToken = tokens[i]; i++;
+
+    // Interface mode: check for interactive element keyword after FUNCAO
+    if (this._interfaceMode && i <= tokens.length) {
+      const elemToken = tokens[i - 1 + 1] || tokens[i]; // token after funcao
+      const elemT = tokens[i];
+      if (elemT && ['BOTAO', 'TOGGLE', 'SLIDER', 'SELETOR', 'DIGITE', 'PERGUNTE'].includes(elemT.type)) {
+        this._parseDefinaInteractive(tokens, nameToken, elemT);
+        return;
+      }
+    }
 
     // Parse parameters (optional parens)
     let params = [];
@@ -1078,11 +1300,25 @@ class Parser {
     // execute raiz de X
     // execute aleatorio entre X e Y
     // execute aleatorio entre X e Y repita N vezes
+    // execute cor de fundo R G B (interface mode only)
     
     if (tokens.length < 2) {
       this.errors.push({
         message: `'execute' precisa de uma expressão. Ex: execute x + y`,
         line: tokens[0].line, col: tokens[0].col, length: tokens[0].value.length
+      });
+      return;
+    }
+
+    // Interface mode: execute cor de fundo R G B
+    if (this._interfaceMode && tokens[1] && tokens[1].type === 'COR_DE_FUNDO') {
+      const nums = tokens.slice(2).filter(t => t.type === 'NUMBER').map(t => Number(t.value));
+      this.ast.push({
+        type: 'ExecuteCorDeFundo',
+        r: nums[0] ?? 0,
+        g: nums[1] ?? 0,
+        b: nums[2] ?? 0,
+        line: tokens[0].line
       });
       return;
     }
@@ -1582,6 +1818,10 @@ class Parser {
         xName = xIdent ? xIdent.value : 'obj';
       } else if (formatToken && formatToken.type === 'CIENTIFICA') {
         format = 'cientifica';
+      } else if (formatToken && formatToken.type === 'SPRITE' && this._interfaceMode) {
+        format = 'sprite';
+      } else if (formatToken && ['BOTAO', 'TOGGLE', 'SLIDER', 'SELETOR', 'DIGITE', 'PERGUNTE'].includes(formatToken.type) && this._interfaceMode) {
+        format = formatToken.type.toLowerCase();
       } else if (formatToken) {
         const f = formatToken.value.toLowerCase();
         if (['texto', 'destaque', 'apresentação', 'apresentacao', 'dados'].includes(f)) {
@@ -1597,6 +1837,12 @@ class Parser {
       exprTokens = tokens.slice(1);
     }
 
+    // Extract yellow (interface) modifiers: ajuste, grid, cor de texto
+    let yellow = null;
+    if (this._interfaceMode) {
+      yellow = this._parseYellowModifiers(tokens);
+    }
+
     this.ast.push({
       type: 'Apresente',
       exprTokens,
@@ -1604,6 +1850,7 @@ class Parser {
       yExprTokens,
       xName,
       yName,
+      yellow,
       line: tokens[0].line
     });
 
@@ -1611,6 +1858,51 @@ class Parser {
     if (exprTokens && exprTokens.length > 0) this.validateExpr(exprTokens, 'apresente');
     if (yExprTokens && yExprTokens.length > 0) this.validateExpr(yExprTokens, 'tabela/grafico argumento');
   } // end parseApresente
+
+  // Extract yellow interface modifiers from a token line
+  // Modifiers: ajuste POS TAM | grid X Y W H | cor de texto R G B
+  _parseYellowModifiers(tokens) {
+    const yellow = {};
+    const ajusteIdx = tokens.findIndex(t => t.type === 'AJUSTE');
+    const gridIdx   = tokens.findIndex(t => t.type === 'GRID');
+    const corTextoIdx = tokens.findIndex(t => t.type === 'COR_DE_TEXTO');
+
+    if (ajusteIdx !== -1) {
+      // ajuste POSICAO TAMANHO — both are IDENTIFIERs
+      const posToken = tokens[ajusteIdx + 1];
+      const tamToken = tokens[ajusteIdx + 2];
+      yellow.ajuste = {
+        pos: posToken ? posToken.value.toLowerCase() : 'centro',
+        tam: tamToken ? tamToken.value.toLowerCase() : 'm',
+      };
+    }
+
+    if (gridIdx !== -1) {
+      // grid X Y W H — four numbers
+      const nums = [];
+      for (let i = gridIdx + 1; i < tokens.length && nums.length < 4; i++) {
+        if (tokens[i].type === 'NUMBER') nums.push(Number(tokens[i].value));
+      }
+      yellow.grid = {
+        x: nums[0] ?? 50,
+        y: nums[1] ?? 50,
+        w: nums[2] ?? 40,
+        h: nums[3] ?? 10,
+      };
+    }
+
+    if (corTextoIdx !== -1) {
+      const nums = [];
+      for (let i = corTextoIdx + 1; i < tokens.length && nums.length < 3; i++) {
+        if (tokens[i].type === 'NUMBER') nums.push(Number(tokens[i].value));
+      }
+      if (nums.length === 3) {
+        yellow.corTexto = { r: nums[0], g: nums[1], b: nums[2] };
+      }
+    }
+
+    return Object.keys(yellow).length > 0 ? yellow : null;
+  }
 
   parseImporte(tokens) {
     if (tokens.length < 2) {
@@ -1632,7 +1924,9 @@ class Parser {
       const lib = this._registry.get(nameToken.value);
       const csvDs = this._csvDatasets || [];
       const isCsvKey = csvDs.some(d => d.key === nameToken.value);
-      if (!lib && !isCsvKey) {
+      // 'interface' is a built-in mode — not in registry but always valid
+      const isBuiltIn = nameToken.value === 'interface';
+      if (!lib && !isCsvKey && !isBuiltIn) {
         this.errors.push({
           message: `Biblioteca ou dataset '${nameToken.value}' não encontrado. Veja as disponíveis na aba Bibliotecas ou Dados`,
           line: nameToken.line, col: nameToken.col, length: nameToken.value.length
@@ -1652,6 +1946,85 @@ class Parser {
       line: tokens[0].line
     });
   }
+
+  parseSalve(tokens) {
+    // salve local v1, v2, v3
+    // salve nuvem v1, v2, v3
+    // salve nuvem v1, v2 usando chave
+    if (tokens.length < 2) {
+      this.errors.push({ message: `'salve' precisa de 'local' ou 'nuvem'. Ex: salve local x`, line: tokens[0].line, col: tokens[0].col, length: tokens[0].value.length });
+      return;
+    }
+    const destToken = tokens[1];
+    if (destToken.type !== 'LOCAL' && destToken.type !== 'NUVEM') {
+      this.errors.push({ message: `'salve' requer 'local' ou 'nuvem' após o comando. Ex: salve local x`, line: destToken.line, col: destToken.col, length: destToken.value.length });
+      return;
+    }
+    const dest = destToken.type === 'LOCAL' ? 'local' : 'nuvem';
+
+    // Find USANDO token
+    const usandoIdx = tokens.findIndex(t => t.type === 'USANDO');
+    const varTokens = tokens.slice(2, usandoIdx === -1 ? tokens.length : usandoIdx);
+    const varNames = varTokens.filter(t => t.type === 'IDENTIFIER').map(t => t.value);
+
+    if (varNames.length === 0) {
+      this.errors.push({ message: `'salve ${dest}' requer pelo menos uma variável. Ex: salve ${dest} x`, line: destToken.line, col: destToken.col, length: destToken.value.length });
+      return;
+    }
+
+    let usingKey = null;
+    if (usandoIdx !== -1 && dest === 'nuvem') {
+      const keyToken = tokens[usandoIdx + 1];
+      if (keyToken && (keyToken.type === 'IDENTIFIER' || keyToken.type === 'STRING')) {
+        usingKey = keyToken.type === 'STRING' ? keyToken.value : keyToken.value;
+      }
+    }
+
+    this.ast.push({ type: dest === 'local' ? 'SalveLocal' : 'SalveNuvem', vars: varNames, usingKey, line: tokens[0].line });
+  }
+
+  parseCarregue(tokens) {
+    // carregue local v1, v2, v3
+    // carregue nuvem v1, v2
+    // carregue nuvem v1 usando chave
+    if (tokens.length < 2) {
+      this.errors.push({ message: `'carregue' precisa de 'local' ou 'nuvem'. Ex: carregue local x`, line: tokens[0].line, col: tokens[0].col, length: tokens[0].value.length });
+      return;
+    }
+    const destToken = tokens[1];
+    if (destToken.type !== 'LOCAL' && destToken.type !== 'NUVEM') {
+      this.errors.push({ message: `'carregue' requer 'local' ou 'nuvem' após o comando. Ex: carregue local x`, line: destToken.line, col: destToken.col, length: destToken.value.length });
+      return;
+    }
+    const dest = destToken.type === 'LOCAL' ? 'local' : 'nuvem';
+
+    const usandoIdx = tokens.findIndex(t => t.type === 'USANDO');
+    const varTokens = tokens.slice(2, usandoIdx === -1 ? tokens.length : usandoIdx);
+    const varNames = varTokens.filter(t => t.type === 'IDENTIFIER').map(t => t.value);
+
+    if (varNames.length === 0) {
+      this.errors.push({ message: `'carregue ${dest}' requer pelo menos uma variável. Ex: carregue ${dest} x`, line: destToken.line, col: destToken.col, length: destToken.value.length });
+      return;
+    }
+
+    // Validate: variables must be declared
+    for (const name of varNames) {
+      if (!this.declaredVars.has(name)) {
+        const t = varTokens.find(tk => tk.value === name);
+        this.errors.push({ message: `'carregue' requer que a variável já tenha sido declarada com 'defina': '${name}' não foi declarado`, line: t?.line ?? tokens[0].line, col: t?.col ?? tokens[0].col, length: name.length });
+      }
+    }
+
+    let usingKey = null;
+    if (usandoIdx !== -1 && dest === 'nuvem') {
+      const keyToken = tokens[usandoIdx + 1];
+      if (keyToken && (keyToken.type === 'IDENTIFIER' || keyToken.type === 'STRING')) {
+        usingKey = keyToken.value;
+      }
+    }
+
+    this.ast.push({ type: dest === 'local' ? 'CarregueLocal' : 'CarregueNuvem', vars: varNames, usingKey, line: tokens[0].line });
+  }
 } // end Parser
 
 // ==================== TRANSPILER ====================
@@ -1668,7 +2041,16 @@ class Transpiler {
 
   transpile() {
     let jsLines = [];
-    jsLines.push('const __output = [];');
+
+    // Detect interface mode in first pre-pass (before emitting output array declaration)
+    this._interfaceMode = this.ast.some(n => n.type === 'ImportLib' && n.libName === 'interface');
+
+    if (this._interfaceMode) {
+      jsLines.push('const __output = [];');
+      jsLines.push('const __iface_output = [];');
+    } else {
+      jsLines.push('const __output = [];');
+    }
 
     // First pass: gather declared variables, functions, and arrays
     for (const node of this.ast) {
@@ -1692,6 +2074,12 @@ class Transpiler {
         this.declaredObjects.add(node.name);
       }
       if (node.type === 'DefineCompactar') {
+        this.declaredVars.add(node.name);
+      }
+      if (node.type === 'DefineSpriteReto' || node.type === 'DefineSpriteCircle' || node.type === 'DefineSpriteImage') {
+        this.declaredVars.add(node.name);
+      }
+      if (node.type === 'DefineInteractive') {
         this.declaredVars.add(node.name);
       }
       if (node.type === 'ImportLib') {
@@ -1734,9 +2122,12 @@ class Transpiler {
       }
     }
 
-    jsLines.push('return __output;');
+    jsLines.push(this._interfaceMode ? 'return __iface_output;' : 'return __output;');
     return { code: jsLines.join('\n'), errors: this.errors };
   }
+
+  // Returns the JS output-array variable name for use in template literals
+  get _out() { return this._interfaceMode ? '__iface_output' : '__output'; }
 
   transpileNode(node) {
     switch (node.type) {
@@ -1748,6 +2139,10 @@ class Transpiler {
       case 'DefineCompactar': return this.transpileDefineCompactar(node);
       case 'AlterVar': return this.transpileAlterVar(node);
       case 'DefineFunc': return this.transpileDefineFunc(node);
+      case 'SalveLocal': return this.transpileSalveLocal(node);
+      case 'CarregueLocal': return this.transpileCarregueLocal(node);
+      case 'SalveNuvem': return this.transpileSalveNuvem(node);
+      case 'CarregueNuvem': return this.transpileCarregueNuvem(node);
       case 'ExecuteSimple': return this.transpileExecuteSimple(node);
       case 'ExecuteConditional': return this.transpileExecuteConditional(node);
       case 'ExecuteRepeat': return this.transpileExecuteRepeat(node);
@@ -1756,6 +2151,11 @@ class Transpiler {
       case 'ExecuteMath': return this.transpileExecuteMath(node);
       case 'ExecuteLoop': return this.transpileExecuteLoop(node);
       case 'ExecuteAmostras': return this.transpileExecuteAmostras(node);
+      case 'ExecuteCorDeFundo': return this.transpileExecuteCorDeFundo(node);
+      case 'DefineSpriteReto': return this.transpileDefineSpriteReto(node);
+      case 'DefineSpriteCircle': return this.transpileDefineSpriteCircle(node);
+      case 'DefineSpriteImage': return this.transpileDefineSpriteImage(node);
+      case 'DefineInteractive': return this.transpileDefineInteractive(node);
       case 'Apresente': return this.transpileApresente(node);
       case 'ImportLib': return this.transpileImportLib(node);
       default: return '';
@@ -2110,9 +2510,11 @@ class Transpiler {
     const val = this.tokensToExpr(node.valueTokens);
     const name = node.name;
     const assign = `${name} = ${val};`;
-    const log = `__output.push({ type: "execute", value: ${name} });`;
+    // In interface mode, keep __state in sync after every assignment
+    const stateSync = this._interfaceMode ? ` __state[${JSON.stringify(name)}] = ${name};` : '';
+    const log = `${this._out}.push({ type: "execute", value: ${name} });`;
     const guardedWhile = (cond, body) =>
-      `{ let __guard = 0; while (${cond}) { ${body} if (++__guard > 10000) { __output.push({ type: "execute", value: "⚠️ enquanto: limite de 10.000 iterações atingido" }); break; } } }`;
+      `{ let __guard = 0; while (${cond}) { ${body} if (++__guard > 10000) { ${this._out}.push({ type: "execute", value: "⚠️ enquanto: limite de 10.000 iterações atingido" }); break; } } }`;
 
     const hasEnquanto = !!node.enquantoTokens;
     const hasRelatando = node.relatar;
@@ -2120,28 +2522,29 @@ class Transpiler {
 
     if (hasEnquanto) {
       const cond = this.tokensToExpr(node.enquantoTokens);
-      // enquanto with or without relatando — relatando(N)+enquanto is blocked at parse time
-      const body = hasRelatando ? `${assign} ${log}` : assign;
+      const body = hasRelatando ? `${assign}${stateSync} ${log}` : `${assign}${stateSync}`;
       return guardedWhile(cond, body);
     }
 
     if (hasN) {
-      // relatando(N) without enquanto
       const n = this.tokensToExpr(node.relatandoN);
-      return `for (let __i = 0; __i < ${n}; __i++) { ${assign} ${log} }`;
+      return `for (let __i = 0; __i < ${n}; __i++) { ${assign}${stateSync} ${log} }`;
     }
 
     if (hasRelatando) {
-      // bare relatando — 1x with log
-      return `${assign} ${log}`;
+      return `${assign}${stateSync} ${log}`;
     }
 
     // plain altere
-    return assign;
+    return `${assign}${stateSync}`;
   }
 
   transpileDefineVar(node) {
     const value = this.tokensToExpr(node.valueTokens);
+    if (this._interfaceMode) {
+      // In interface mode, persist to __state so re-runs use the last value
+      return `if (__state[${JSON.stringify(node.name)}] === undefined) { __state[${JSON.stringify(node.name)}] = (${value}); }\nvar ${node.name} = __state[${JSON.stringify(node.name)}];`;
+    }
     return `let ${node.name} = ${value};`;
   }
 
@@ -2238,7 +2641,7 @@ class Transpiler {
           }
         }
         const expr = this.tokensToExpr(exprT);
-        bodyLines.push(`__output.push({ type: "${format}", value: ${expr} });`);
+        bodyLines.push(`${this._out}.push({ type: "${format}", value: ${expr} });`);
       } else {
         const expr = this.tokensToExpr(stmtTokens);
         bodyLines.push(`return ${expr};`);
@@ -2320,7 +2723,7 @@ class Transpiler {
 
   transpileExecuteSimple(node) {
     const expr = this.tokensToExpr(node.exprTokens);
-    return `__output.push({ type: "execute", value: ${expr} });`;
+    return `${this._out}.push({ type: "execute", value: ${expr} });`;
   }
 
   transpileExecuteConditional(node) {
@@ -2329,23 +2732,23 @@ class Transpiler {
     
     if (node.elseTokens && node.elseTokens.length > 0) {
       const elseExpr = this.tokensToExpr(node.elseTokens);
-      return `if (${cond}) { __output.push({ type: "execute", value: ${expr} }); } else { __output.push({ type: "execute", value: ${elseExpr} }); }`;
+      return `if (${cond}) { ${this._out}.push({ type: "execute", value: ${expr} }); } else { ${this._out}.push({ type: "execute", value: ${elseExpr} }); }`;
     }
-    return `if (${cond}) { __output.push({ type: "execute", value: ${expr} }); }`;
+    return `if (${cond}) { ${this._out}.push({ type: "execute", value: ${expr} }); }`;
   }
 
   transpileExecuteRepeat(node) {
     const expr = this.tokensToExpr(node.exprTokens);
     const times = this.tokensToExpr(node.timesTokens);
     // Use a function to re-evaluate expr each iteration (important for dynamic values like functions)
-    return `for (let __i = 0; __i < ${times}; __i++) { __output.push({ type: "execute", value: (${expr}) }); }`;
+    return `for (let __i = 0; __i < ${times}; __i++) { ${this._out}.push({ type: "execute", value: (${expr}) }); }`;
   }
 
   transpileExecuteRepeatMath(node) {
     const times = this.tokensToExpr(node.timesTokens);
     const mathExpr = this.transpileExecuteMathExpr(node.mathNode);
     // Re-evaluate math expression each iteration (critical for aleatorio)
-    return `for (let __i = 0; __i < ${times}; __i++) { __output.push({ type: "execute", value: ${mathExpr} }); }`;
+    return `for (let __i = 0; __i < ${times}; __i++) { ${this._out}.push({ type: "execute", value: ${mathExpr} }); }`;
   }
 
   transpileExecuteRepeatConditional(node) {
@@ -2355,9 +2758,9 @@ class Transpiler {
     let body;
     if (node.elseTokens && node.elseTokens.length > 0) {
       const elseExpr = this.tokensToExpr(node.elseTokens);
-      body = `if (${cond}) { __output.push({ type: "execute", value: ${expr} }); } else { __output.push({ type: "execute", value: ${elseExpr} }); }`;
+      body = `if (${cond}) { ${this._out}.push({ type: "execute", value: ${expr} }); } else { ${this._out}.push({ type: "execute", value: ${elseExpr} }); }`;
     } else {
-      body = `if (${cond}) { __output.push({ type: "execute", value: ${expr} }); }`;
+      body = `if (${cond}) { ${this._out}.push({ type: "execute", value: ${expr} }); }`;
     }
     return `for (let __i = 0; __i < ${times}; __i++) { ${body} }`;
   }
@@ -2429,7 +2832,7 @@ class Transpiler {
     // Use transpileRodarExec to handle ALL expr forms: aleatorio, potencia, juros, se/senao, etc.
     const expr = this.transpileRodarExec(node.exprTokens);
     const n    = this.tokensToExpr(node.nTokens);
-    return `__output.push({ type: "execute", value: (function(){ const __s=[]; for(let __i=0;__i<${n};__i++) __s.push(${expr}); return __s; })() });`;
+    return `${this._out}.push({ type: "execute", value: (function(){ const __s=[]; for(let __i=0;__i<${n};__i++) __s.push(${expr}); return __s; })() });`;
   }
 
   transpileExecuteLoop(node) {
@@ -2487,7 +2890,7 @@ class Transpiler {
           if (enquantoIdx !== -1) valEnd = Math.min(valEnd, enquantoIdx);
           const val = this.tokensToExpr(stmtTokens.slice(3, valEnd));
           let stmt = `${name} = ${val};`;
-          if (relatandoIdx !== -1) stmt += ` __output.push({ type: "execute", value: ${name} });`;
+          if (relatandoIdx !== -1) stmt += ` ${this._out}.push({ type: "execute", value: ${name} });`;
           lines.push(stmt);
         }
       } else if (first.type === 'DEFINA') {
@@ -2508,7 +2911,7 @@ class Transpiler {
             break;
           }
         }
-        lines.push(`__output.push({ type: "${format}", value: ${this.tokensToExpr(exprT)} });`);
+        lines.push(`${this._out}.push({ type: "${format}", value: ${this.tokensToExpr(exprT)} });`);
       }
     }
     return lines.join(' ');
@@ -2516,26 +2919,123 @@ class Transpiler {
 
   transpileExecuteMath(node) {
     const mathExpr = this.transpileExecuteMathExpr(node);
-    return `__output.push({ type: "execute", value: ${mathExpr} });`;
+    return `${this._out}.push({ type: "execute", value: ${mathExpr} });`;
+  }
+
+  // ==================== interface cor de fundo ====================
+  transpileExecuteCorDeFundo(node) {
+    return `__iface_output.push({ type: 'corDeFundo', r: ${node.r}, g: ${node.g}, b: ${node.b} });`;
+  }
+
+  // ==================== sprites ====================
+  transpileDefineSpriteReto(node) {
+    // Register the sprite definition in __sprites at runtime
+    const points = JSON.stringify(node.points);
+    return `if (!window.parent.__ccSprites) window.parent.__ccSprites = {};\nwindow.parent.__ccSprites[${JSON.stringify(node.name)}] = { kind: 'reto', points: ${points} };\nvar ${node.name} = ${JSON.stringify(node.name)};`;
+  }
+
+  transpileDefineSpriteCircle(node) {
+    return `if (!window.parent.__ccSprites) window.parent.__ccSprites = {};\nwindow.parent.__ccSprites[${JSON.stringify(node.name)}] = { kind: 'curvo', radius: ${node.radius} };\nvar ${node.name} = ${JSON.stringify(node.name)};`;
+  }
+
+  transpileDefineSpriteImage(node) {
+    return `if (!window.parent.__ccSprites) window.parent.__ccSprites = {};\nwindow.parent.__ccSprites[${JSON.stringify(node.name)}] = { kind: 'image', imageKey: ${JSON.stringify(node.imageKey)} };\nvar ${node.name} = ${JSON.stringify(node.name)};`;
+  }
+
+  transpileDefineInteractive(node) {
+    // Register in __ccElements on parent window (persistent across re-runs)
+    const key = JSON.stringify(node.name);
+    const labelStr = JSON.stringify(node.label);
+    const extraStr = JSON.stringify(node.extraArgs);
+    let effectCode = '';
+    if (node.effectTokens && node.effectTokens.length > 0) {
+      // Transpile effect tokens as an inline execute
+      const effectExpr = this.tokensToExpr(node.effectTokens);
+      effectCode = `${this._out}.push({ type: 'execute', value: (${effectExpr}) });`;
+    }
+    return [
+      `if (!window.parent.__ccElements) window.parent.__ccElements = {};`,
+      `window.parent.__ccElements[${key}] = { kind: ${JSON.stringify(node.kind)}, label: ${labelStr}, extra: ${extraStr} };`,
+      `var ${node.name} = window.parent.__ccElements[${key}];`,
+      `if (${node.name}.valor === undefined) ${node.name}.valor = '';`,
+    ].join('\n');
+  }
+
+  // ==================== salve/carregue local ====================
+  transpileSalveLocal(node) {
+    const lines = node.vars.map(v =>
+      `try { localStorage.setItem('__cc_${v}', JSON.stringify(${v})); } catch(__e) {}`
+    );
+    return lines.join('\n');
+  }
+
+  transpileCarregueLocal(node) {
+    const lines = node.vars.map(v =>
+      `try { var __s_${v} = localStorage.getItem('__cc_${v}'); if (__s_${v} !== null) ${v} = JSON.parse(__s_${v}); } catch(__e) {}`
+    );
+    return lines.join('\n');
+  }
+
+  // ==================== salve/carregue nuvem ====================
+  transpileSalveNuvem(node) {
+    const keyExpr = node.usingKey
+      ? JSON.stringify(node.usingKey)
+      : `__cloudKey`;
+    const bodyObj = '{' + node.vars.map(v => `"${v}": ${v}`).join(', ') + '}';
+    return `(async function(){
+  try {
+    const __ck = ${keyExpr};
+    await fetch(CRABCODE_CLOUD_URL + '/save/' + __ck, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(${bodyObj})
+    });
+  } catch(__e) {}
+})();`;
+  }
+
+  transpileCarregueNuvem(node) {
+    const keyExpr = node.usingKey
+      ? JSON.stringify(node.usingKey)
+      : `__cloudKey`;
+    const assignLines = node.vars.map(v =>
+      `if (__d["${v}"] !== undefined) ${v} = __d["${v}"];`
+    ).join(' ');
+    return `await (async function(){
+  try {
+    const __ck = ${keyExpr};
+    const __r = await fetch(CRABCODE_CLOUD_URL + '/load/' + __ck);
+    const __d = await __r.json();
+    ${assignLines}
+  } catch(__e) {}
+})();`;
   }
 
   transpileApresente(node) {
     const expr = this.tokensToExpr(node.exprTokens);
     const format = node.format;
+    const out = this._interfaceMode ? '__iface_output' : '__output';
+    const yellowPart = node.yellow ? `, yellow: ${JSON.stringify(node.yellow)}` : '';
+    if (format === 'sprite' && this._interfaceMode) {
+      return `${out}.push({ type: 'sprite', spriteKey: ${expr}${yellowPart} });`;
+    }
+    if (['botao', 'toggle', 'slider', 'seletor', 'digite', 'pergunte'].includes(format) && this._interfaceMode) {
+      return `${out}.push({ type: ${JSON.stringify(format)}, elemKey: ${expr}${yellowPart} });`;
+    }
     if (format === 'tabela' || format === 'grafico') {
       const xName = JSON.stringify(node.xName || 'x');
       if (node.yExprTokens) {
         const yExpr = this.tokensToExpr(node.yExprTokens);
         const yName = JSON.stringify(node.yName || 'y');
-        return `__output.push({ type: "${format}", value: ${expr}, yValue: ${yExpr}, xName: ${xName}, yName: ${yName} });`;
+        return `${out}.push({ type: "${format}", value: ${expr}, yValue: ${yExpr}, xName: ${xName}, yName: ${yName}${yellowPart} });`;
       }
-      return `__output.push({ type: "${format}", value: ${expr}, xName: ${xName} });`;
+      return `${out}.push({ type: "${format}", value: ${expr}, xName: ${xName}${yellowPart} });`;
     }
     if (format === 'estatisticas') {
       const xName = JSON.stringify(node.xName || 'obj');
-      return `__output.push({ type: "estatisticas", value: ${expr}, xName: ${xName} });`;
+      return `${out}.push({ type: "estatisticas", value: ${expr}, xName: ${xName}${yellowPart} });`;
     }
-    return `__output.push({ type: "${format}", value: ${expr} });`;
+    return `${out}.push({ type: "${format}", value: ${expr}${yellowPart} });`;
   }
 
   transpileImportLib(node) {
@@ -2543,6 +3043,18 @@ class Transpiler {
     const libName = node.libName;
     if (this._importedLibs.has(libName)) return '';
     this._importedLibs.add(libName);
+
+    // Interface mode built-in: inject state persistence prologue
+    if (libName === 'interface') {
+      return [
+        'var __INTERFACE_MODE = true;',
+        'if (!window.parent.__ccState) window.parent.__ccState = {};',
+        'var __state = window.parent.__ccState;',
+        'window.parent.__ccTecla = window.parent.__ccTecla || { valor: \'\', atual: \'\' };',
+        'var tecla = window.parent.__ccTecla;'
+      ].join('\n');
+    }
+
     const lib = this._registry ? this._registry.get(libName) : null;
     if (!lib) {
       // Check if it's a CSV dataset — code injection is handled by getCsvInjectionCode()
@@ -2585,18 +3097,29 @@ class Runtime {
   }
 
   _initSandbox() {
-    // Create a hidden sandboxed iframe — allow-scripts only (no allow-same-origin)
+    // Create a hidden sandboxed iframe.
+    // allow-same-origin is required for localStorage (salve/carregue local) and
+    // fetch (salve/carregue nuvem). Security tradeoff: documented in README.
     this._iframe = document.createElement('iframe');
-    this._iframe.sandbox = 'allow-scripts';
+    this._iframe.sandbox = 'allow-scripts allow-same-origin';
     this._iframe.style.cssText = 'display:none;width:0;height:0;border:none;position:absolute;';
     this._iframe.srcdoc = `<!DOCTYPE html><html><head><script>
       window.addEventListener('message', function(e) {
         try {
           var code = e.data && e.data.code;
           if (typeof code !== 'string') return;
-          var fn = new Function(code);
-          var output = fn();
-          parent.postMessage({ id: e.data.id, output: output || [], error: null }, '*');
+          // Wrap in async function to support await (used by carregue/salve nuvem)
+          var asyncFn = new Function('return (async function() {\\n' + code + '\\n})()');
+          var result = asyncFn();
+          if (result && typeof result.then === 'function') {
+            result.then(function(output) {
+              parent.postMessage({ id: e.data.id, output: output || [], error: null }, '*');
+            }).catch(function(err) {
+              parent.postMessage({ id: e.data.id, output: [], error: err.message }, '*');
+            });
+          } else {
+            parent.postMessage({ id: e.data.id, output: result || [], error: null }, '*');
+          }
         } catch (err) {
           parent.postMessage({ id: e.data.id, output: [], error: err.message }, '*');
         }
@@ -2658,11 +3181,15 @@ class Runtime {
   }
 
   _runDirect(jsCode) {
-    // Fallback — direct execution (used if sandbox unavailable)
+    // Fallback — direct async execution (used if sandbox unavailable)
     try {
-      const fn = new Function(jsCode);
-      const output = fn();
-      return { output: output || [], error: null };
+      const fn = new Function('return (async function() {\n' + jsCode + '\n})()');
+      const result = fn();
+      if (result && typeof result.then === 'function') {
+        // Return synchronous empty output — async fallback can't wait
+        return { output: [], error: null };
+      }
+      return { output: result || [], error: null };
     } catch (e) {
       return { output: [], error: e.message };
     }

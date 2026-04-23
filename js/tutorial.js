@@ -1393,7 +1393,7 @@ Adapte o dashboard: adicione mais dados (calorias diárias, horas de sono) e imp
       <!-- CALL TO ACTION -->
       <div style="background: linear-gradient(135deg, rgba(245,166,35,0.08), rgba(124,142,242,0.08)); border: 2px solid var(--color-laranja); border-radius: var(--radius); padding: 24px 20px; margin-top: 32px; text-align: center;">
         <h2 style="margin: 0 0 12px; color: var(--color-laranja);">🚀 Continue Explorando!</h2>
-        <p style="font-size: 14px; line-height: 1.7; margin: 0 0 16px;">Você completou o tutorial! Mas sua jornada está apenas começando. O CrabCode possui <strong>mais de 80 bibliotecas oficiais</strong> cobrindo física, química, biologia, finanças, matemática, epidemiologia, jogos, culinária, esportes e muito mais.</p>
+        <p style="font-size: 14px; line-height: 1.7; margin: 0 0 16px;">Você completou as primeiras cinco unidades! As próximas unidades cobrem interface visual e jogos interativos.</p>
         <p style="font-size: 14px; line-height: 1.7; margin: 0 0 12px;">Visite a aba <strong>📚 Bibliotecas</strong> e explore pelo sistema de selos:</p>
         <div style="display:flex;flex-direction:column;gap:6px;text-align:left;max-width:420px;margin:0 auto 16px;font-size:13px;line-height:1.6;">
           <span>⭐ <strong>Estrelada</strong> — a mais poderosa e versátil, comece aqui</span>
@@ -1402,6 +1402,240 @@ Adapte o dashboard: adicione mais dados (calorias diárias, horas de sono) e imp
           <span>🎙️ <strong>Meta</strong> — importam várias bibliotecas de uma vez; ideal quando você quer tudo disponível sem pensar</span>
         </div>
         <p style="font-size: 13px; color: var(--text-secondary); margin: 0;"><em>💡 Dica: crie suas próprias bibliotecas para reutilizar fórmulas que você usa com frequência!</em></p>
+      </div>
+
+      <!-- ═══════════════════════════════════════════ -->
+      <h1 style="border-top: 2px solid var(--color-azul); padding-top: 20px; margin-top: 40px;">Unidade 6 — Interface Visual</h1>
+      <p>Aprenda a criar interfaces interativas com elementos visuais: cores de fundo, textos posicionados, sprites gráficos e elementos de entrada como botões, sliders e campos de texto.</p>
+
+      <!-- LIÇÃO 41 -->
+      <h2>Lição 41: Ativando o Modo Interface</h2>
+      <p>Para criar uma interface visual, importe o módulo especial <code>interface</code> no início do seu código. Isso transforma o painel de output em uma tela livre para posicionar elementos.</p>
+      <div class="example-box">
+        <button class="copy-btn" onclick="copyCode(this)">Copiar</button>
+        <div class="example-label">Exemplo</div>
+        <pre>importe interface
+
+execute cor de fundo 20 20 40
+
+defina titulo como "Olá, Interface!"
+apresente titulo em destaque</pre>
+      </div>
+      <p>O comando <code>execute cor de fundo R G B</code> define a cor de fundo da tela usando valores RGB (0–255). O elemento <code>destaque</code> aparece centralizado por padrão.</p>
+
+      <!-- LIÇÃO 42 -->
+      <h2>Lição 42: Posicionando com Ajuste e Grid</h2>
+      <p>Use o modificador <code>ajuste</code> para controlar a posição e o tamanho de qualquer elemento. A posição pode ser: <code>esquerda</code>, <code>centroesquerda</code>, <code>centro</code>, <code>centrodireita</code>, <code>direita</code>. O tamanho pode ser: <code>ppp</code> (5%), <code>pp</code> (10%), <code>p</code> (25%), <code>m</code> (40%), <code>g</code> (60%), <code>gg</code> (80%), <code>ggg</code> (100%).</p>
+      <div class="example-box">
+        <button class="copy-btn" onclick="copyCode(this)">Copiar</button>
+        <div class="example-label">Exemplo</div>
+        <pre>importe interface
+
+execute cor de fundo 240 248 255
+
+apresente "Esquerda" em texto ajuste esquerda p
+apresente "Centro" em texto ajuste centro m
+apresente "Direita" em texto ajuste direita p</pre>
+      </div>
+      <p>Para controle preciso, use <code>grid COL LIN LARGURA ALTURA</code> onde cada valor é de 1 a 12 (como um grid de 12 colunas).</p>
+      <div class="example-box">
+        <button class="copy-btn" onclick="copyCode(this)">Copiar</button>
+        <div class="example-label">Exemplo</div>
+        <pre>importe interface
+
+apresente "Bloco A" em texto grid 1 1 4 2
+apresente "Bloco B" em texto grid 5 1 4 2
+apresente "Bloco C" em texto grid 9 1 4 2</pre>
+      </div>
+
+      <!-- LIÇÃO 43 -->
+      <h2>Lição 43: Sprites — Formas Geométricas</h2>
+      <p>Sprites são formas gráficas que você define uma vez e apresenta na tela. Existem dois tipos: <code>reto</code> (polígono com pontos) e <code>curvo</code> (círculo com raio).</p>
+      <div class="example-box">
+        <button class="copy-btn" onclick="copyCode(this)">Copiar</button>
+        <div class="example-label">Exemplo</div>
+        <pre>importe interface
+
+execute cor de fundo 15 15 30
+
+defina triangulo como sprite reto(0 100, 50 0, 100 100) com cor 255 100 100
+defina bolinha como sprite curvo(50) com cor 100 200 255
+
+apresente triangulo em sprite ajuste esquerda m
+apresente bolinha em sprite ajuste direita m</pre>
+      </div>
+      <p>Os pontos do <code>reto</code> são pares <code>X Y</code> separados por vírgula. O <code>curvo</code> recebe o raio. A cor é definida por <code>com cor R G B</code>.</p>
+
+      <!-- LIÇÃO 44 -->
+      <h2>Lição 44: Elementos Interativos — Botão e Toggle</h2>
+      <p>Crie elementos que o usuário pode clicar ou acionar. Quando interagidos, o programa é re-executado automaticamente com o novo estado.</p>
+      <div class="example-box">
+        <button class="copy-btn" onclick="copyCode(this)">Copiar</button>
+        <div class="example-label">Exemplo</div>
+        <pre>importe interface
+
+defina contador como 0
+defina btn como funcao botao("Clique aqui") execute contador + 1
+
+apresente btn em botao ajuste centro m
+apresente contador em texto ajuste centro g</pre>
+      </div>
+      <p>O <code>toggle</code> funciona como uma chave liga/desliga. A propriedade <code>.valor</code> retorna <code>verdadeiro</code> ou <code>falso</code>.</p>
+      <div class="example-box">
+        <button class="copy-btn" onclick="copyCode(this)">Copiar</button>
+        <div class="example-label">Exemplo</div>
+        <pre>importe interface
+
+defina chave como funcao toggle("Modo escuro")
+apresente chave em toggle
+
+se chave.valor
+  execute cor de fundo 20 20 20
+senao
+  execute cor de fundo 240 240 240</pre>
+      </div>
+
+      <!-- LIÇÃO 45 -->
+      <h2>Lição 45: Slider e Seletor</h2>
+      <p>O <code>slider</code> cria um controle deslizante. O <code>seletor</code> cria um menu suspenso com opções.</p>
+      <div class="example-box">
+        <button class="copy-btn" onclick="copyCode(this)">Copiar</button>
+        <div class="example-label">Exemplo</div>
+        <pre>importe interface
+
+defina velocidade como funcao slider("Velocidade", 0, 100)
+apresente velocidade em slider
+
+apresente velocidade.valor em texto</pre>
+      </div>
+      <div class="example-box">
+        <button class="copy-btn" onclick="copyCode(this)">Copiar</button>
+        <div class="example-label">Exemplo</div>
+        <pre>importe interface
+
+defina tema como funcao seletor("Tema", "Claro", "Escuro", "Azul")
+apresente tema em seletor
+
+apresente tema.valor em texto</pre>
+      </div>
+
+      <!-- LIÇÃO 46 -->
+      <h2>Lição 46: Campos de Texto — Digite e Pergunte</h2>
+      <p>Use <code>digite</code> para um campo de texto livre e <code>pergunte</code> para um card com pergunta e campo de resposta.</p>
+      <div class="example-box">
+        <button class="copy-btn" onclick="copyCode(this)">Copiar</button>
+        <div class="example-label">Exemplo</div>
+        <pre>importe interface
+
+defina nome como funcao digite("Seu nome")
+apresente nome em digite
+
+apresente "Olá, " + nome.valor + "!" em destaque</pre>
+      </div>
+
+      <!-- LIÇÃO 47 -->
+      <h2>Lição 47: Teclado com Tecla</h2>
+      <p>A variável especial <code>tecla</code> é automaticamente disponível no modo interface. Ela possui duas propriedades: <code>tecla.valor</code> (última tecla pressionada) e <code>tecla.atual</code> (tecla pressionada neste frame exato).</p>
+      <div class="example-box">
+        <button class="copy-btn" onclick="copyCode(this)">Copiar</button>
+        <div class="example-label">Exemplo</div>
+        <pre>importe interface
+
+execute cor de fundo 10 10 30
+
+apresente "Pressione uma tecla!" em destaque ajuste centro m
+apresente tecla.valor em texto ajuste centro g</pre>
+      </div>
+
+      <!-- LIÇÃO 48 — Projeto Unidade 6 -->
+      <h2>Projeto 6: Dashboard Interativo</h2>
+      <p>Crie um mini-dashboard com slider de temperatura, toggle de modo escuro e exibição de resultados formatados.</p>
+      <div class="example-box">
+        <button class="copy-btn" onclick="copyCode(this)">Copiar</button>
+        <div class="example-label">Projeto Unidade 6</div>
+        <pre>importe interface
+
+defina modoEscuro como funcao toggle("Modo escuro")
+apresente modoEscuro em toggle ajuste direita ppp
+
+se modoEscuro.valor
+  execute cor de fundo 20 20 30
+senao
+  execute cor de fundo 240 248 255
+
+defina temp como funcao slider("Temperatura (°C)", -20, 50)
+apresente temp em slider ajuste centro g
+
+defina sensacao como temp.valor - 3
+
+apresente "Temperatura: " + temp.valor + "°C" em destaque ajuste centro m
+apresente "Sensação: " + sensacao + "°C" em texto ajuste centro m</pre>
+      </div>
+      <div class="activity-box complete">
+Adicione um seletor com cidades e mostre a cidade selecionada junto com a temperatura.
+      </div>
+
+      <!-- ═══════════════════════════════════════════ -->
+      <h1 style="border-top: 2px solid var(--color-roxo); padding-top: 20px; margin-top: 40px;">Unidade 7 — Persistência e Nuvem</h1>
+      <p>Aprenda a salvar e carregar dados entre execuções: no armazenamento local do navegador ou na nuvem CrabCode.</p>
+
+      <!-- LIÇÃO 59 -->
+      <h2>Lição 59: Salve e Carregue Local</h2>
+      <p>Use <code>salve local X</code> para guardar o valor de uma variável no armazenamento local do navegador. Use <code>carregue local X</code> para recuperá-la numa execução futura.</p>
+      <div class="example-box">
+        <button class="copy-btn" onclick="copyCode(this)">Copiar</button>
+        <div class="example-label">Exemplo</div>
+        <pre>defina pontuacao como 0
+carregue local pontuacao
+
+altere pontuacao para pontuacao + 10
+
+salve local pontuacao
+execute "Pontuação: " + pontuacao</pre>
+      </div>
+      <p>Os dados persistem entre execuções e até entre sessões do navegador. São privados ao dispositivo do usuário.</p>
+
+      <!-- LIÇÃO 60 -->
+      <h2>Lição 60: Salve e Carregue Nuvem</h2>
+      <p>Para compartilhar dados entre dispositivos, use <code>salve nuvem X usando "chave"</code> e <code>carregue nuvem X usando "chave"</code>. A chave é como um identificador único de acesso — quem conhece a chave, acessa os dados.</p>
+      <div class="example-box">
+        <button class="copy-btn" onclick="copyCode(this)">Copiar</button>
+        <div class="example-label">Exemplo</div>
+        <pre>defina ranking como 100
+carregue nuvem ranking usando "meu-ranking-2025"
+
+altere ranking para ranking + 5
+
+salve nuvem ranking usando "meu-ranking-2025"
+execute "Ranking na nuvem: " + ranking</pre>
+      </div>
+      <div class="activity-box complete">
+Crie um contador de visitas que persiste na nuvem. Cada vez que rodar o código, o contador deve incrementar e ser salvo de volta.
+      </div>
+
+      <!-- LIÇÃO 61 — Projeto Unidade 7 -->
+      <h2>Projeto 7: Placar Online</h2>
+      <p>Combine interface interativa com persistência na nuvem para criar um placar simples de pontuação.</p>
+      <div class="example-box">
+        <button class="copy-btn" onclick="copyCode(this)">Copiar</button>
+        <div class="example-label">Projeto Unidade 7</div>
+        <pre>importe interface
+
+execute cor de fundo 15 15 35
+
+defina pontos como 0
+carregue nuvem pontos usando "crabcode-placar-demo"
+
+defina btnAdicionar como funcao botao("+ 10 pontos") execute pontos + 10
+defina btnReset como funcao botao("Resetar") execute 0
+
+apresente "🏆 Placar Online" em destaque ajuste centro m
+apresente pontos em texto ajuste centro g
+
+apresente btnAdicionar em botao ajuste centroesquerda p
+apresente btnReset em botao ajuste centrodireita p
+
+salve nuvem pontos usando "crabcode-placar-demo"</pre>
       </div>
 
       <h2>Atalhos de Teclado</h2>

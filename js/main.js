@@ -17,6 +17,11 @@ import {
   copyLibImport, copyLibExample,
   openLibModal, closeLibModal, saveLibFromModal, deleteCustomLibUI,
 } from './libs.js';
+import { InterfaceRenderer } from './interface.js';
+import { initImagesTab, loadImages } from './images.js';
+
+// Active interface renderer (persisted across re-runs in interface mode)
+let _iRenderer = null;
 
 // ==================== RUN CODE ====================
 async function runCode() {
@@ -52,11 +57,32 @@ async function runCode() {
   const csvInjection = getCsvInjectionCode();
   const { output, error } = await runtime.runInSandbox(csvInjection + jsCode);
 
-  if (error) {
-    outputRenderer.render(output);
-    outputRenderer.renderError(error);
+  const outputBody = document.getElementById('output-body');
+
+  if (transpiler._interfaceMode) {
+    // Interface mode: render into the interface-canvas
+    const canvas = InterfaceRenderer.show(outputBody);
+    if (canvas) {
+      if (!_iRenderer || _iRenderer._container !== canvas) {
+        if (_iRenderer) _iRenderer.teardown();
+        _iRenderer = new InterfaceRenderer(canvas);
+      }
+      // Extract background color from output if present
+      const bgItem = output.find(o => o.type === 'corDeFundo');
+      const bgColor = bgItem ? `rgb(${bgItem.r},${bgItem.g},${bgItem.b})` : null;
+      _iRenderer.render(output, bgColor);
+    }
+    if (error) outputRenderer.renderError(error);
   } else {
-    outputRenderer.render(output);
+    // STEM mode: restore normal output, hide interface canvas
+    if (_iRenderer) { _iRenderer.teardown(); _iRenderer = null; }
+    InterfaceRenderer.hide(outputBody);
+    if (error) {
+      outputRenderer.render(output);
+      outputRenderer.renderError(error);
+    } else {
+      outputRenderer.render(output);
+    }
   }
 
   // Switch to editor tab if not already
@@ -81,6 +107,7 @@ function switchTab(tab) {
   document.getElementById('scripts-panel').classList.toggle('active', tab === 'scripts');
   document.getElementById('libs-panel').classList.toggle('active', tab === 'libs');
   document.getElementById('dados-panel').style.display = tab === 'dados' ? '' : 'none';
+  document.getElementById('imagens-panel').style.display = tab === 'imagens' ? '' : 'none';
 
   // Show/hide resize handle and output panel based on tab
   const isEditor = tab === 'editor';
@@ -372,6 +399,105 @@ async function _doExportPDF() {
   }
 }
 
+// ==================== EXPORT AS HTML ====================
+function exportHTML() {
+  const date = new Date().toISOString().slice(0, 10);
+  const isDark = document.body.classList.contains('dark');
+  const cs = getComputedStyle(document.body);
+
+  const resolveCssVar = (name, fallback) =>
+    cs.getPropertyValue(name).trim() || fallback;
+
+  const bgMain    = resolveCssVar('--bg-output',      isDark ? '#181825' : '#f5f5f8');
+  const bgEditor  = resolveCssVar('--bg-editor',      isDark ? '#1e1e2e' : '#ffffff');
+  const textPrimary = resolveCssVar('--text-primary', isDark ? '#cdd6f4' : '#4c4f69');
+  const colorLaranja = resolveCssVar('--color-laranja', isDark ? '#fab387' : '#d86213');
+  const fontMono  = resolveCssVar('--font-mono',      'Consolas, monospace');
+  const fontUi    = resolveCssVar('--font-ui',        'Segoe UI, sans-serif');
+
+  // Interface mode: snapshot iframe if present
+  const ifaceCanvas = document.getElementById('interface-canvas');
+  const ifaceIframe = ifaceCanvas && ifaceCanvas.style.display !== 'none'
+    ? ifaceCanvas.querySelector('iframe') : null;
+
+  let bodyContent;
+  if (ifaceIframe) {
+    try {
+      const inner = ifaceIframe.contentDocument || ifaceIframe.contentWindow?.document;
+      bodyContent = inner ? inner.documentElement.outerHTML : '';
+      if (bodyContent) {
+        const blob = new Blob([bodyContent], { type: 'text/html' });
+        const link = document.createElement('a');
+        link.download = 'crabcode-export-' + date + '.html';
+        link.href = URL.createObjectURL(blob);
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(link.href), 5000);
+        return;
+      }
+    } catch (e) { /* cross-origin — fall through to STEM snapshot */ }
+  }
+
+  // STEM mode: snapshot output-body
+  const outputBody = document.getElementById('output-body');
+  const outputHTML = outputBody ? outputBody.innerHTML : '<p>Sem output</p>';
+
+  const codeText = (typeof codeEditor !== 'undefined') ? codeEditor.value : '';
+
+  const html = `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CrabCode Export – ${date}</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:${fontUi};background:${bgMain};color:${textPrimary};padding:24px;min-height:100vh;}
+  .export-header{display:flex;align-items:center;gap:8px;margin-bottom:20px;padding-bottom:12px;border-bottom:2px solid ${colorLaranja};}
+  .export-header span{font-size:20px;font-weight:bold;color:${colorLaranja};}
+  .export-date{font-size:11px;color:#888;margin-left:auto;}
+  .section-title{font-size:13px;font-weight:bold;margin-bottom:8px;color:${textPrimary};opacity:0.7;}
+  .code-block{background:${bgEditor};padding:14px 16px;border-radius:8px;font-family:${fontMono};font-size:13px;white-space:pre-wrap;word-break:break-word;line-height:1.6;margin-bottom:20px;color:${textPrimary};}
+  .output-section{background:${bgEditor};padding:14px 16px;border-radius:8px;}
+  /* Preserve all output styles inline */
+  .output-item{margin-bottom:10px;font-family:${fontUi};}
+  .output-execute{font-family:${fontMono};font-size:13px;padding:6px 10px;background:${bgMain};border-radius:4px;}
+  .output-destaque{font-size:18px;font-weight:bold;padding:10px 14px;border-left:3px solid ${colorLaranja};background:${bgMain};border-radius:4px;}
+  .output-texto{font-size:14px;padding:4px 0;}
+  table{border-collapse:collapse;width:100%;font-size:13px;font-family:${fontMono};}
+  th{background:${bgMain};padding:6px 10px;text-align:left;font-weight:bold;}
+  td{padding:6px 10px;border-top:1px solid rgba(255,255,255,0.05);}
+  .export-footer{margin-top:24px;font-size:10px;color:#888;text-align:right;}
+</style>
+</head>
+<body>
+  <div class="export-header">
+    <span>CrabCode</span>
+    <span class="export-date">Exportado em ${new Date().toLocaleDateString('pt-BR')}</span>
+  </div>
+  <div class="section-title">Código</div>
+  <div class="code-block">${escapeHtmlExport(codeText)}</div>
+  <div class="section-title">Output</div>
+  <div class="output-section">${outputHTML}</div>
+  <div class="export-footer">Gerado por CrabCode</div>
+</body>
+</html>`;
+
+  const blob = new Blob([html], { type: 'text/html' });
+  const link = document.createElement('a');
+  link.download = 'crabcode-export-' + date + '.html';
+  link.href = URL.createObjectURL(blob);
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(link.href), 5000);
+}
+
+function escapeHtmlExport(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
 // ==================== INIT ====================
 function init() {
   loadTheme();
@@ -382,6 +508,13 @@ function init() {
   initResize();
   initShortcuts();
   AutoComplete.init();
+  initImagesTab();
+
+  // Sync images to window.__ccImages for sandbox access
+  try {
+    const imgs = loadImages();
+    window.__ccImages = imgs;
+  } catch { window.__ccImages = {}; }
 
   // Editor events
   codeEditor.addEventListener('input', updateEditor);
@@ -399,8 +532,12 @@ function init() {
   document.getElementById('btn-theme').addEventListener('click', toggleTheme);
   document.getElementById('btn-export-png').addEventListener('click', exportPNG);
   document.getElementById('btn-export-pdf').addEventListener('click', exportPDF);
+  document.getElementById('btn-export-html')?.addEventListener('click', exportHTML);
   document.getElementById('btn-presentation').addEventListener('click', togglePresentation);
   document.getElementById('error-toggle').addEventListener('click', toggleErrorPanel);
+
+  // Interface mode re-run on interactive element events
+  window.addEventListener('crab-rerun', () => { runCode(); });
 
   // Tab buttons
   document.querySelectorAll('.tab').forEach(tab => {

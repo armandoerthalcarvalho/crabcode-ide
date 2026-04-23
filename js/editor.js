@@ -238,6 +238,24 @@ const AutoComplete = {
     { label: 'nao',         desc: 'Operador lógico NÃO' },
     { label: 'verdadeiro',  desc: 'Valor booleano verdadeiro' },
     { label: 'falso',       desc: 'Valor booleano falso' },
+    // Interface module keywords
+    { label: 'ajuste',      desc: 'Posiciona/dimensiona elemento de interface' },
+    { label: 'grid',        desc: 'Posicionamento em grid (col, lin, largura, altura)' },
+    { label: 'sprite',      desc: 'Forma gráfica (reto, curvo, ou imagem)' },
+    { label: 'reto',        desc: 'Sprite poligonal com pontos (x,y)' },
+    { label: 'curvo',       desc: 'Sprite circular com raio' },
+    { label: 'botao',       desc: 'Botão clicável de interface' },
+    { label: 'toggle',      desc: 'Chave liga/desliga (checkbox)' },
+    { label: 'slider',      desc: 'Controle deslizante (range)' },
+    { label: 'seletor',     desc: 'Menu suspenso com opções' },
+    { label: 'digite',      desc: 'Campo de texto livre' },
+    { label: 'pergunte',    desc: 'Card com pergunta e campo de resposta' },
+    { label: 'tecla',       desc: 'Variável de tecla pressionada (interface)' },
+    { label: 'salve',       desc: 'Salva variável localmente ou na nuvem' },
+    { label: 'carregue',    desc: 'Carrega variável local ou da nuvem' },
+    { label: 'local',       desc: 'Modificador: salvar/carregar no armazenamento local' },
+    { label: 'nuvem',       desc: 'Modificador: salvar/carregar na nuvem' },
+    { label: 'usando',      desc: 'Define chave de acesso para nuvem' },
   ],
 
   // ── Built-in math/utility functions ──
@@ -264,6 +282,14 @@ const AutoComplete = {
     { label: 'cientifica',    desc: 'Notação científica do número' },
     { label: 'apresentação',  desc: 'Formato de apresentação visual' },
     { label: 'apresentacao',  desc: 'Formato de apresentação (sem acento)' },
+    // Interface formats
+    { label: 'sprite',        desc: 'Renderiza sprite gráfico de interface' },
+    { label: 'botao',         desc: 'Botão clicável' },
+    { label: 'toggle',        desc: 'Chave liga/desliga' },
+    { label: 'slider',        desc: 'Controle deslizante' },
+    { label: 'seletor',       desc: 'Menu suspenso' },
+    { label: 'digite',        desc: 'Campo de texto livre' },
+    { label: 'pergunte',      desc: 'Card de pergunta com resposta' },
   ],
 
   // ── Snippet templates (inserted as-is) ──
@@ -284,6 +310,9 @@ const AutoComplete = {
     { label: 'apresente em estatisticas', insert: 'apresente dados em estatisticas',           desc: 'Template: exibir estatísticas' },
     { label: 'execute loop',            insert: 'execute loop(i, 1, 10)\n  execute i\nfim',    desc: 'Template: loop com contador' },
     { label: 'importe biblioteca',      insert: 'importe nome_biblioteca',                    desc: 'Template: importar biblioteca' },
+    // New interface + game starters
+    { label: 'interface starter',       insert: 'importe interface\n\nexecute cor de fundo 20 20 40\n\ndefina titulo como "Minha Interface"\napresente titulo em destaque ajuste centro m\n\ndefina btn como funcao botao("Clique aqui") execute "Olá!"\napresente btn em botao', desc: 'Template: interface visual básica' },
+    { label: 'jogo starter',            insert: 'importe interface\n\nexecute cor de fundo 10 10 30\n\ndefina jogador como sprite reto(0 0, 100 0, 100 100, 0 100) com cor 100 200 100\napresente jogador em sprite ajuste centroesquerda m\n\nse tecla.atual == "ArrowRight"\n  apresente "→" em texto\nsenao\n  apresente " " em texto', desc: 'Template: jogo simples com sprite e tecla' },
   ],
 
   init() {
@@ -728,3 +757,125 @@ const AutoComplete = {
 
 
 export { codeEditor, outputRenderer, errorManager, runtime, highlighter, updateEditor, updateLineNumbers, scheduleHighlight, syncScroll, goToLine, toggleErrorPanel, AutoComplete };
+
+// ==================== COLOR PICKER HINT ====================
+// Shows a floating color swatch when cursor is on a color-bearing line.
+(function initColorPicker() {
+  const COLOR_PATTERN = /(?:cor de fundo|cor de texto)\s+(\d{1,3})\s+(\d{1,3})\s+(\d{1,3})/i;
+
+  let pickerEl = null;
+
+  function ensurePicker() {
+    if (pickerEl) return pickerEl;
+    pickerEl = document.createElement('div');
+    pickerEl.id = 'color-hint';
+    pickerEl.style.cssText = [
+      'position:fixed',
+      'display:none',
+      'z-index:9999',
+      'background:var(--bg-secondary)',
+      'border:1px solid var(--border)',
+      'border-radius:6px',
+      'padding:6px 10px',
+      'box-shadow:0 4px 12px rgba(0,0,0,0.25)',
+      'display:none',
+      'align-items:center',
+      'gap:8px',
+      'font-size:12px',
+      'color:var(--text-secondary)',
+      'cursor:pointer',
+    ].join(';');
+    pickerEl.title = 'Clique para escolher cor';
+
+    const swatch = document.createElement('div');
+    swatch.id = 'color-hint-swatch';
+    swatch.style.cssText = 'width:20px;height:20px;border-radius:50%;border:1px solid rgba(0,0,0,0.2);flex-shrink:0;';
+
+    const inp = document.createElement('input');
+    inp.type = 'color';
+    inp.id = 'color-hint-input';
+    inp.style.cssText = 'width:20px;height:20px;border:none;padding:0;background:none;cursor:pointer;opacity:0;position:absolute;left:6px;';
+
+    const label = document.createElement('span');
+    label.id = 'color-hint-label';
+    label.textContent = 'cor';
+
+    pickerEl.appendChild(swatch);
+    pickerEl.appendChild(inp);
+    pickerEl.appendChild(label);
+    document.body.appendChild(pickerEl);
+
+    inp.addEventListener('input', () => {
+      const hex = inp.value;
+      const r = parseInt(hex.slice(1,3),16);
+      const g = parseInt(hex.slice(3,5),16);
+      const b = parseInt(hex.slice(5,7),16);
+      swatch.style.background = hex;
+      // Replace the RGB numbers in the current line
+      _replaceColorInEditor(r, g, b);
+    });
+
+    return pickerEl;
+  }
+
+  function _replaceColorInEditor(r, g, b) {
+    const src = codeEditor.value;
+    const pos = codeEditor.selectionStart;
+    const lineStart = src.lastIndexOf('\n', pos - 1) + 1;
+    const lineEnd   = src.indexOf('\n', pos);
+    const line = src.slice(lineStart, lineEnd === -1 ? undefined : lineEnd);
+    const newLine = line.replace(COLOR_PATTERN, (m, _r, _g, _b, offset, str) => {
+      return m.replace(/\d{1,3}\s+\d{1,3}\s+\d{1,3}/, `${r} ${g} ${b}`);
+    });
+    if (newLine === line) return;
+    const before = src.slice(0, lineStart);
+    const after   = lineEnd === -1 ? '' : src.slice(lineEnd);
+    codeEditor.value = before + newLine + after;
+    updateEditor();
+  }
+
+  function _getCurrentLineText() {
+    const src = codeEditor.value;
+    const pos = codeEditor.selectionStart;
+    const lineStart = src.lastIndexOf('\n', pos - 1) + 1;
+    const lineEnd   = src.indexOf('\n', pos);
+    return lineEnd === -1 ? src.slice(lineStart) : src.slice(lineStart, lineEnd);
+  }
+
+  function _rgbToHex(r, g, b) {
+    return '#' + [r,g,b].map(n => Math.min(255, Math.max(0, n)).toString(16).padStart(2,'0')).join('');
+  }
+
+  function _showPickerNearCursor() {
+    const line = _getCurrentLineText();
+    const m = COLOR_PATTERN.exec(line);
+    const picker = ensurePicker();
+    if (!m) { picker.style.display = 'none'; return; }
+
+    const r = parseInt(m[1]), g = parseInt(m[2]), b = parseInt(m[3]);
+    const hex = _rgbToHex(r, g, b);
+    document.getElementById('color-hint-swatch').style.background = hex;
+    document.getElementById('color-hint-input').value = hex;
+    document.getElementById('color-hint-label').textContent = `rgb(${r}, ${g}, ${b})`;
+
+    // Position near caret
+    const rect = codeEditor.getBoundingClientRect();
+    const lineHeight = parseFloat(getComputedStyle(codeEditor).lineHeight) || 22;
+    const src = codeEditor.value;
+    const pos = codeEditor.selectionStart;
+    const lineNum = (src.slice(0, pos).match(/\n/g) || []).length;
+    const top = rect.top + (lineNum - (codeEditor.scrollTop / lineHeight) + 1) * lineHeight;
+    picker.style.display = 'flex';
+    picker.style.left = (rect.right - 180) + 'px';
+    picker.style.top  = Math.min(top, window.innerHeight - 60) + 'px';
+  }
+
+  // Attach events after DOM is ready
+  document.addEventListener('DOMContentLoaded', () => {
+    codeEditor.addEventListener('keyup', _showPickerNearCursor);
+    codeEditor.addEventListener('click', _showPickerNearCursor);
+    codeEditor.addEventListener('blur', () => {
+      setTimeout(() => { if (pickerEl) pickerEl.style.display = 'none'; }, 200);
+    });
+  });
+})();
