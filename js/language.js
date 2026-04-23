@@ -788,6 +788,14 @@ class Parser {
 
   parse() {
     const lines = this.getLines();
+
+    // Pre-detect interface mode so all interface-mode branches in parseLineTokens work correctly
+    this._interfaceMode = lines.some(lineTokens =>
+      lineTokens.length >= 2 &&
+      lineTokens[0].type === 'IMPORTE' &&
+      lineTokens[1].type === 'IDENTIFIER' &&
+      lineTokens[1].value === 'interface'
+    );
     
     for (const lineTokens of lines) {
       if (lineTokens.length === 0) continue;
@@ -2985,7 +2993,7 @@ class Transpiler {
     return `(async function(){
   try {
     const __ck = ${keyExpr};
-    await fetch(CRABCODE_CLOUD_URL + '/save/' + __ck, {
+    await fetch('${CRABCODE_CLOUD_URL}' + '/save/' + __ck, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(${bodyObj})
@@ -3004,7 +3012,7 @@ class Transpiler {
     return `await (async function(){
   try {
     const __ck = ${keyExpr};
-    const __r = await fetch(CRABCODE_CLOUD_URL + '/load/' + __ck);
+    const __r = await fetch('${CRABCODE_CLOUD_URL}' + '/load/' + __ck);
     const __d = await __r.json();
     ${assignLines}
   } catch(__e) {}

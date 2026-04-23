@@ -312,7 +312,7 @@ const AutoComplete = {
     { label: 'importe biblioteca',      insert: 'importe nome_biblioteca',                    desc: 'Template: importar biblioteca' },
     // New interface + game starters
     { label: 'interface starter',       insert: 'importe interface\n\nexecute cor de fundo 20 20 40\n\ndefina titulo como "Minha Interface"\napresente titulo em destaque ajuste centro m\n\ndefina btn como funcao botao("Clique aqui") execute "Olá!"\napresente btn em botao', desc: 'Template: interface visual básica' },
-    { label: 'jogo starter',            insert: 'importe interface\n\nexecute cor de fundo 10 10 30\n\ndefina jogador como sprite reto(0 0, 100 0, 100 100, 0 100) com cor 100 200 100\napresente jogador em sprite ajuste centroesquerda m\n\nse tecla.atual == "ArrowRight"\n  apresente "→" em texto\nsenao\n  apresente " " em texto', desc: 'Template: jogo simples com sprite e tecla' },
+    { label: 'jogo starter',            insert: 'importe interface\n\nexecute cor de fundo 10 10 30\n\ndefina jogador como sprite reto(0 0, 40 0, 40 40, 0 40)\napresente jogador em sprite ajuste centroesquerda m\n\napresente tecla.atual em texto ajuste centro p', desc: 'Template: jogo simples com sprite e tecla' },
   ],
 
   init() {
