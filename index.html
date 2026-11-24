@@ -1,207 +1,320 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-<link rel="icon" type="image/png" href="assets/crabcode_logo.png">
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CrabCode IDE</title>
-<link rel="stylesheet" href="assets/css/styles.css">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CrabCode IDE — Programação em Português para STEM, Dados e Interfaces</title>
+  <meta name="description" content="IDE educacional e científica 100% em português com 100 bibliotecas de STEM, Machine Learning, Finanças BR, CSV, Pixel Art e Interfaces interativas." />
+  <meta property="og:title" content="CrabCode IDE — Programação em Português para STEM, Dados e Interfaces" />
+  <meta property="og:description" content="Escreva, visualize gráficos, treine regressões, importe CSVs e crie interfaces com pixel art diretamente no navegador." />
+  <link rel="icon" type="image/png" href="assets/crabcode_logo.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,500;0,600;1,400&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="assets/css/styles.css" />
 </head>
 <body class="dark">
 
 <!-- ========== HEADER ========== -->
-<div id="header">
-  <div class="logo"><img src="assets/crabcode_logo.png" alt="CrabCode" style="height:20px;vertical-align:middle;margin-right:5px;"><span>Crab</span>Code</div>
-  <div class="tabs">
-    <button class="tab active" data-tab="editor">Editor</button>
-    <button class="tab" data-tab="tutorial">Tutorial</button>
-    <button class="tab" data-tab="docs">Documentação</button>
-    <button class="tab" data-tab="scripts">Scripts</button>
-    <button class="tab" data-tab="libs">Bibliotecas</button>
-    <button class="tab" data-tab="dados">Dados</button>
-    <button class="tab" data-tab="imagens">Imagens</button>
+<header id="header">
+  <div class="logo">
+    <img src="assets/crabcode_logo.png" alt="CrabCode" class="logo-img" />
+    <span class="logo-word"><span>Crab</span>Code</span>
   </div>
-  <div class="header-actions">
-    <span class="saved-indicator" id="saved-indicator">Salvo ✓</span>
-    <button class="btn btn-run" id="btn-run" title="Ctrl+Enter">▶ Rodar</button>
-    <button class="btn btn-icon" id="btn-clear" title="Ctrl+L">🗑</button>
-    <button class="btn-icon-sm" id="btn-export-png" title="Exportar código como PNG">📷</button>
-    <button class="btn-icon-sm" id="btn-export-pdf" title="Exportar como PDF">📄</button>
-    <button class="btn-icon-sm" id="btn-export-html" title="Exportar como HTML">🌐</button>
-    <button class="btn-icon-sm" id="btn-presentation" title="Modo Apresentação">🖥️</button>
-    <button class="btn btn-icon" id="btn-theme" title="Alternar tema">🌙</button>
-  </div>
-</div>
 
-<!-- ========== MAIN ========== -->
-<div id="main">
+  <nav class="tabs" role="tablist" aria-label="Seções da IDE">
+    <button type="button" class="tab active" data-tab="editor" role="tab" aria-selected="true">Editor</button>
+    <button type="button" class="tab" data-tab="tutorial" role="tab" aria-selected="false">Tutorial</button>
+    <button type="button" class="tab" data-tab="docs" role="tab" aria-selected="false">Docs</button>
+    <button type="button" class="tab" data-tab="scripts" role="tab" aria-selected="false">Scripts</button>
+    <button type="button" class="tab" data-tab="libs" role="tab" aria-selected="false">Bibliotecas</button>
+    <button type="button" class="tab" data-tab="dados" role="tab" aria-selected="false">Dados</button>
+    <button type="button" class="tab" data-tab="imagens" role="tab" aria-selected="false">Imagens</button>
+  </nav>
+
+  <div class="header-actions">
+    <span class="saved-indicator" id="saved-indicator" aria-live="polite">Salvo ✓</span>
+    <button type="button" class="btn btn-subtle" id="btn-templates" title="Modelos rápidos (Ctrl+K)">Modelos</button>
+    <button type="button" class="btn btn-run" id="btn-run" title="Executar código (Ctrl+Enter)">▶ Rodar</button>
+    <div class="header-divider" aria-hidden="true"></div>
+    <button type="button" class="btn-icon-sm" id="btn-save-as-script" title="Salvar código atual em Scripts" aria-label="Salvar código atual em Scripts">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+    </button>
+    <button type="button" class="btn-icon-sm" id="btn-clear" title="Limpar saída (Ctrl+L)" aria-label="Limpar saída">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+    </button>
+    <button type="button" class="btn-icon-sm" id="btn-export-png" title="Exportar código como PNG (offline)" aria-label="Exportar código como PNG">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+    </button>
+    <button type="button" class="btn-icon-sm" id="btn-export-pdf" title="Imprimir / Salvar como PDF" aria-label="Exportar como PDF">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+    </button>
+    <button type="button" class="btn-icon-sm" id="btn-export-html" title="Exportar relatório HTML" aria-label="Exportar como HTML">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+    </button>
+    <button type="button" class="btn-icon-sm" id="btn-presentation" title="Modo Apresentação" aria-label="Modo Apresentação">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+    </button>
+    <button type="button" class="btn-icon-sm" id="btn-theme" title="Alternar tema claro/escuro" aria-label="Alternar tema">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+    </button>
+  </div>
+</header>
+
+<!-- ========== MAIN WORKSPACE ========== -->
+<main id="main">
   <!-- EDITOR PANEL -->
-  <div id="editor-panel" class="active">
+  <section id="editor-panel" class="active" aria-label="Editor de código">
     <div class="editor-container">
-      <div class="line-numbers" id="line-numbers">1</div>
+      <div class="line-numbers" id="line-numbers" aria-hidden="true">1</div>
       <div class="editor-wrapper">
         <div class="background-fill"></div>
-        <div class="highlight-overlay" id="highlight-overlay"></div>
-        <textarea id="code-editor" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off"></textarea>
+        <div class="highlight-overlay" id="highlight-overlay" aria-hidden="true"></div>
+        <textarea id="code-editor" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off" aria-label="Código CrabCode"></textarea>
       </div>
     </div>
+
+    <div class="editor-statusbar">
+      <span id="editor-cursor-info">Ln 1, Col 1 · 1 linha</span>
+      <span class="statusbar-hint">Ctrl+Enter rodar · Ctrl+K modelos · Tab autocompletar</span>
+    </div>
+
     <div id="error-panel">
-      <div class="error-panel-header" id="error-toggle">
-        <span>⚠️ Problemas</span>
+      <div class="error-panel-header" id="error-toggle" role="button" tabindex="0">
+        <span>Problemas</span>
         <span class="count zero" id="error-count">0</span>
-        <span style="margin-left:auto;font-size:11px;color:var(--text-muted)" id="error-toggle-arrow">▼</span>
+        <span class="error-toggle-arrow" id="error-toggle-arrow">▼</span>
       </div>
       <div class="error-list" id="error-list"></div>
     </div>
-  </div>
+  </section>
 
   <!-- TUTORIAL PANEL -->
-  <div id="tutorial-panel" class="doc-content">
-    <!-- Filled by JS -->
-  </div>
+  <section id="tutorial-panel" class="doc-content" aria-label="Tutorial interativo"></section>
 
   <!-- DOCS PANEL -->
-  <div id="docs-panel" class="doc-content">
-    <!-- Filled by JS -->
-  </div>
+  <section id="docs-panel" class="doc-content" aria-label="Documentação da linguagem"></section>
 
   <!-- SCRIPTS PANEL -->
-  <div id="scripts-panel" class="doc-content" style="max-width:none;padding:0;">
-    <div id="scripts-toolbar">
-      <input id="scripts-search" type="text" placeholder="🔍 Pesquisar por título, descrição ou código..." autocomplete="off" />
-      <button class="btn btn-run" id="btn-new-script">＋ Novo Script</button>
-    </div>
-    <div id="scripts-list"></div>
-  </div>
-
-  <!-- SCRIPT MODAL -->
-  <div id="script-modal" class="modal-overlay" style="display:none">
-    <div class="modal-box">
-      <h2 style="margin:0 0 16px;font-size:16px;color:var(--text-primary)">Novo Script</h2>
-      <label class="modal-label">Título</label>
-      <input id="modal-title" type="text" class="modal-input" placeholder="Ex: Dashboard de Vendas" maxlength="80" />
-      <label class="modal-label">Descrição <span style="color:var(--text-muted);font-size:11px">(opcional)</span></label>
-      <textarea id="modal-desc" class="modal-input modal-textarea" placeholder="Breve descrição do que esse script faz..." maxlength="300"></textarea>
-      <label class="modal-label">Código</label>
-      <textarea id="modal-code" class="modal-input modal-code" placeholder="Cole ou escreva o código CrabCode aqui..." spellcheck="false"></textarea>
-      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
-        <button class="btn" id="close-script-modal">Cancelar</button>
-        <button class="btn btn-run" id="save-script-btn">Salvar Script</button>
+  <section id="scripts-panel" class="doc-content full-panel" aria-label="Meus Scripts">
+    <div id="scripts-toolbar" class="panel-toolbar">
+      <input id="scripts-search" type="text" class="toolbar-search" placeholder="Pesquisar por título, descrição ou código..." autocomplete="off" />
+      <div class="toolbar-btn-group">
+        <button type="button" class="btn" id="btn-save-current-script">Salvar código atual</button>
+        <button type="button" class="btn" id="btn-import-script">Importar .crab</button>
+        <input type="file" id="script-file-input" accept=".crab,.txt" hidden />
+        <button type="button" class="btn btn-run" id="btn-new-script">＋ Novo Script</button>
       </div>
     </div>
-  </div>
+    <div id="scripts-list" class="cards-container"></div>
+  </section>
 
   <!-- LIBS PANEL -->
-  <div id="libs-panel" class="doc-content" style="max-width:none;padding:0;">
-    <div id="libs-toolbar">
-      <input id="libs-search" type="text" placeholder="🔍 Pesquisar bibliotecas..." autocomplete="off" />
-      <button class="btn" id="btn-scroll-meta" title="Ir para as meta-bibliotecas">🎙️ Ver Metas</button>
-      <button class="btn btn-run" id="btn-new-lib">＋ Nova Biblioteca</button>
-    </div>
-    <div id="libs-list"></div>
-  </div>
-
-  <!-- LIB MODAL -->
-  <div id="lib-modal" class="modal-overlay" style="display:none">
-    <div class="modal-box">
-      <h2 style="margin:0 0 16px;font-size:16px;color:var(--text-primary)">Nova Biblioteca Personalizada</h2>
-      <label class="modal-label">Chave de importação</label>
-      <input id="lib-modal-key" type="text" class="modal-input" placeholder="Ex: minhas_funcoes (sem espaços)" maxlength="40" />
-      <label class="modal-label">Título</label>
-      <input id="lib-modal-title" type="text" class="modal-input" placeholder="Ex: 🛠️ Minhas Funções" maxlength="80" />
-      <label class="modal-label">Descrição <span style="color:var(--text-muted);font-size:11px">(opcional)</span></label>
-      <textarea id="lib-modal-desc" class="modal-input modal-textarea" placeholder="Breve descrição da biblioteca..." maxlength="300"></textarea>
-      <label class="modal-label">Código CrabCode</label>
-      <textarea id="lib-modal-code" class="modal-input modal-code" placeholder="defina dobrar como funcao(x) execute x * 2" spellcheck="false"></textarea>
-      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
-        <button class="btn" id="close-lib-modal">Cancelar</button>
-        <button class="btn btn-run" id="save-lib-btn">Salvar Biblioteca</button>
+  <section id="libs-panel" class="doc-content full-panel" aria-label="Bibliotecas">
+    <div id="libs-toolbar" class="panel-toolbar">
+      <input id="libs-search" type="text" class="toolbar-search" placeholder="Pesquisar entre 100 bibliotecas e funções..." autocomplete="off" />
+      <div class="toolbar-btn-group">
+        <span id="libs-count-summary" class="libs-count-summary"></span>
+        <button type="button" class="btn" id="btn-scroll-meta">◈ Meta-Libs</button>
+        <button type="button" class="btn btn-run" id="btn-new-lib">＋ Nova Biblioteca</button>
       </div>
     </div>
-  </div>
+    <div class="libs-filters-wrap">
+      <div id="libs-category-bar" class="filter-bar"></div>
+      <div id="libs-selo-bar" class="filter-bar filter-bar-secondary"></div>
+    </div>
+    <div id="libs-list" class="cards-container libs-grid"></div>
+  </section>
 
   <!-- DADOS (CSV) PANEL -->
-  <div id="dados-panel" class="doc-content" style="max-width:none;padding:0;display:none;">
-    <div id="dados-toolbar">
-      <span style="font-size:13px;color:var(--text-secondary);">Cole um CSV abaixo, dê uma key e importe no editor com <code style="background:var(--bg-secondary);padding:1px 5px;border-radius:4px;">importe key</code></span>
-      <button class="btn btn-run" id="btn-new-csv">＋ Novo CSV</button>
+  <section id="dados-panel" class="doc-content full-panel" aria-label="Datasets CSV">
+    <div id="dados-toolbar" class="panel-toolbar">
+      <span class="toolbar-desc">Importe planilhas <code>.csv</code> (vírgula ou ponto-e-vírgula) e use no editor com <code>importe chave</code>.</span>
+      <button type="button" class="btn btn-run" id="btn-new-csv">＋ Novo CSV</button>
     </div>
-    <div id="dados-list"></div>
-  </div>
-
-  <!-- CSV MODAL -->
-  <div id="csv-modal" class="modal-overlay" style="display:none">
-    <div class="modal-box" style="max-width:560px;width:95%">
-      <h2 style="margin:0 0 16px;font-size:16px;color:var(--text-primary)">📊 Novo Dataset CSV</h2>
-      <label class="modal-label">Key de importação <span style="color:var(--text-muted);font-size:11px">(use no editor: importe key)</span></label>
-      <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
-        <input id="csv-modal-key" type="text" class="modal-input" placeholder="Ex: vend" maxlength="20" style="margin:0;font-family:monospace;letter-spacing:1px;" />
-        <button class="btn" id="csv-suggest-key" style="white-space:nowrap;flex-shrink:0">🎲 Sugerir</button>
-      </div>
-      <label class="modal-label">Título <span style="color:var(--text-muted);font-size:11px">(opcional)</span></label>
-      <input id="csv-modal-title" type="text" class="modal-input" placeholder="Ex: Vendas 2024" maxlength="80" />
-      <label class="modal-label">Cole o CSV aqui</label>
-      <textarea id="csv-modal-content" class="modal-input modal-code" placeholder="mes,vendas,lucro&#10;jan,1200,340&#10;fev,980,210&#10;mar,1450,520" spellcheck="false" style="height:180px;font-size:12px;"></textarea>
-      <div id="csv-modal-preview" style="margin-top:8px;font-size:11px;color:var(--text-muted);font-family:monospace;"></div>
-      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
-        <button class="btn" id="close-csv-modal">Cancelar</button>
-        <button class="btn btn-run" id="save-csv-btn">Salvar Dataset</button>
-      </div>
-    </div>
-  </div>
+    <div id="dados-list" class="cards-container"></div>
+  </section>
 
   <!-- IMAGENS PANEL -->
-  <div id="imagens-panel" class="doc-content" style="max-width:none;padding:0;display:none;">
-    <div id="imagens-toolbar">
-      <span style="font-size:13px;color:var(--text-secondary);">Crie sprites de pixel art e use com <code style="background:var(--bg-secondary);padding:1px 5px;border-radius:4px;">sprite</code> nas interfaces</span>
-      <button class="btn btn-run" id="btn-new-image">＋ Nova Imagem</button>
+  <section id="imagens-panel" class="doc-content full-panel" aria-label="Estúdio de Pixel Art">
+    <div id="imagens-toolbar" class="panel-toolbar">
+      <span class="toolbar-desc">Crie sprites de pixel art e renderize no modo Interface com <code>defina s como sprite "chave"</code>.</span>
+      <button type="button" class="btn btn-run" id="btn-new-image">＋ Novo Sprite</button>
     </div>
-    <div id="imagens-list"></div>
-  </div>
+    <div id="imagens-list" class="cards-container images-grid"></div>
+  </section>
 
-  <!-- IMAGE EDITOR MODAL -->
-  <div id="image-modal" class="modal-overlay" style="display:none">
-    <div class="modal-box" style="max-width:600px;width:97%">
-      <h2 style="margin:0 0 12px;font-size:16px;color:var(--text-primary)">🎨 Editor de Pixel Art</h2>
-      <label class="modal-label">Key da imagem <span style="color:var(--text-muted);font-size:11px">(use no código: sprite "key")</span></label>
-      <input id="img-modal-key" type="text" class="modal-input" placeholder="Ex: nave (sem espaços)" maxlength="40" />
-      <div id="pixel-editor-toolbar" style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
-        <button class="btn img-tool active" data-tool="pincel" title="Pincel">🖊</button>
-        <button class="btn img-tool" data-tool="borracha" title="Borracha">⬜</button>
-        <button class="btn img-tool" data-tool="balde" title="Balde de tinta">🪣</button>
-        <input type="color" id="img-color-picker" value="#ff6b6b" title="Cor" style="width:36px;height:28px;padding:1px;border:1px solid var(--border);border-radius:4px;cursor:pointer;" />
-        <label style="font-size:12px;color:var(--text-secondary);">Grade:</label>
-        <select id="img-grid-size" style="font-size:12px;padding:3px 6px;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);border-radius:4px;">
+  <!-- RESIZE HANDLE -->
+  <div id="resize-handle" role="separator" aria-orientation="vertical" aria-label="Redimensionar painéis"></div>
+
+  <!-- OUTPUT PANEL -->
+  <section id="output-panel" aria-label="Painel de saída">
+    <div class="output-header">
+      <div class="output-header-left">
+        <span class="title">Saída</span>
+        <span class="output-mode-tag mode-stem" id="output-mode-badge">STEM</span>
+      </div>
+      <div class="output-header-actions">
+        <button type="button" class="btn btn-sm" id="btn-reset-iface" style="display:none" title="Reiniciar estado da interface">↺ Reiniciar</button>
+        <button type="button" class="btn btn-sm" id="btn-copy-output" title="Copiar saída como texto">Copiar</button>
+        <button type="button" class="btn btn-sm" id="btn-clear-output" title="Limpar saída (Ctrl+L)">Limpar</button>
+      </div>
+    </div>
+    <div class="output-body" id="output-body">
+      <div id="interface-canvas" style="display:none;position:absolute;inset:0;width:100%;height:100%;overflow:auto;"></div>
+      <div id="stem-output" class="stem-output">
+        <div class="output-empty">
+          <div class="crab"><img src="assets/crabcode_logo.png" alt="CrabCode" class="output-empty-logo" /></div>
+          <div class="output-empty-title">Pronto para executar</div>
+          <div class="output-empty-sub">Pressione <strong>▶ Rodar</strong> ou <kbd>Ctrl</kbd>+<kbd>Enter</kbd> para ver o resultado</div>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- ========== MODALS ========== -->
+
+<!-- SCRIPT MODAL -->
+<div id="script-modal" class="modal-overlay" style="display:none" role="dialog" aria-modal="true">
+  <div class="modal-box">
+    <h2 id="script-modal-heading" class="modal-title">Novo Script</h2>
+    <label class="modal-label" for="modal-title">Título</label>
+    <input id="modal-title" type="text" class="modal-input" placeholder="Ex: Dashboard de Vendas" maxlength="80" />
+    <label class="modal-label" for="modal-desc">Descrição <span class="muted">(opcional)</span></label>
+    <textarea id="modal-desc" class="modal-input modal-textarea" placeholder="Breve descrição do que este script faz..." maxlength="300"></textarea>
+    <label class="modal-label" for="modal-code">Código CrabCode</label>
+    <textarea id="modal-code" class="modal-input modal-code" placeholder="Cole ou escreva o código CrabCode aqui..." spellcheck="false"></textarea>
+    <div class="modal-footer">
+      <button type="button" class="btn" id="close-script-modal">Cancelar</button>
+      <button type="button" class="btn btn-run" id="save-script-btn">Salvar Script</button>
+    </div>
+  </div>
+</div>
+
+<!-- LIB MODAL -->
+<div id="lib-modal" class="modal-overlay" style="display:none" role="dialog" aria-modal="true">
+  <div class="modal-box">
+    <h2 id="lib-modal-heading" class="modal-title">Nova Biblioteca Personalizada</h2>
+    <label class="modal-label" for="lib-modal-key">Chave de importação</label>
+    <input id="lib-modal-key" type="text" class="modal-input mono" placeholder="Ex: minhas_funcoes" maxlength="40" />
+    <label class="modal-label" for="lib-modal-title">Título</label>
+    <input id="lib-modal-title" type="text" class="modal-input" placeholder="Ex: Minhas Funções" maxlength="80" />
+    <label class="modal-label" for="lib-modal-desc">Descrição <span class="muted">(opcional)</span></label>
+    <textarea id="lib-modal-desc" class="modal-input modal-textarea" placeholder="Breve descrição da biblioteca..." maxlength="300"></textarea>
+    <label class="modal-label" for="lib-modal-code">Código CrabCode</label>
+    <textarea id="lib-modal-code" class="modal-input modal-code" placeholder="defina dobrar como funcao(x) execute x * 2" spellcheck="false"></textarea>
+    <div class="modal-footer">
+      <button type="button" class="btn" id="close-lib-modal">Cancelar</button>
+      <button type="button" class="btn btn-run" id="save-lib-btn">Salvar Biblioteca</button>
+    </div>
+  </div>
+</div>
+
+<!-- CSV MODAL -->
+<div id="csv-modal" class="modal-overlay" style="display:none" role="dialog" aria-modal="true">
+  <div class="modal-box modal-box-lg">
+    <h2 id="csv-modal-heading" class="modal-title">Importar Dataset CSV</h2>
+    <div class="modal-row-2">
+      <div>
+        <label class="modal-label" for="csv-modal-key">Chave de importação</label>
+        <div class="input-with-btn">
+          <input id="csv-modal-key" type="text" class="modal-input mono" placeholder="Ex: vendas" maxlength="20" />
+          <button type="button" class="btn" id="csv-suggest-key" title="Gerar chave aleatória">Sugerir</button>
+        </div>
+      </div>
+      <div>
+        <label class="modal-label" for="csv-modal-title">Título <span class="muted">(opcional)</span></label>
+        <input id="csv-modal-title" type="text" class="modal-input" placeholder="Ex: Vendas 2025" maxlength="80" />
+      </div>
+    </div>
+
+    <div id="csv-dropzone" class="csv-dropzone" role="button" tabindex="0">
+      <span>Arraste um arquivo <strong>.csv</strong> aqui ou clique para selecionar do computador</span>
+      <input type="file" id="csv-file-input" accept=".csv,.tsv,.txt" hidden />
+    </div>
+
+    <label class="modal-label" for="csv-modal-content">Ou cole os dados CSV abaixo <span class="muted">(suporta , ou ; e decimais BR)</span></label>
+    <textarea id="csv-modal-content" class="modal-input modal-code" style="height:145px;" placeholder="mes;vendas;lucro&#10;Jan;1200;340,50&#10;Fev;1450;410,20&#10;Mar;1680;530,00" spellcheck="false"></textarea>
+    <div id="csv-modal-preview" class="csv-modal-preview"></div>
+    <div id="csv-modal-table-preview"></div>
+
+    <div class="modal-footer">
+      <button type="button" class="btn" id="close-csv-modal">Cancelar</button>
+      <button type="button" class="btn btn-run" id="save-csv-btn">Salvar Dataset</button>
+    </div>
+  </div>
+</div>
+
+<!-- PIXEL ART STUDIO MODAL -->
+<div id="image-modal" class="modal-overlay" style="display:none" role="dialog" aria-modal="true">
+  <div class="modal-box modal-box-xl">
+    <h2 id="image-modal-title" class="modal-title">Estúdio de Pixel Art</h2>
+    <div class="pixel-top-row">
+      <div style="flex:1">
+        <label class="modal-label" for="img-modal-key">Chave do sprite <span class="muted">(use: sprite "chave")</span></label>
+        <input id="img-modal-key" type="text" class="modal-input mono" placeholder="Ex: nave" maxlength="40" />
+      </div>
+      <div>
+        <label class="modal-label" for="img-grid-size">Grade</label>
+        <select id="img-grid-size" class="modal-input" style="width:96px">
           <option value="8">8×8</option>
           <option value="16" selected>16×16</option>
           <option value="32">32×32</option>
         </select>
-        <button class="btn" id="img-clear-btn" title="Limpar tela">🗑 Limpar</button>
       </div>
-      <canvas id="pixel-canvas" width="320" height="320" style="border:1px solid var(--border);cursor:crosshair;image-rendering:pixelated;display:block;max-width:100%;"></canvas>
-      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
-        <button class="btn" id="close-image-modal">Cancelar</button>
-        <button class="btn btn-run" id="save-image-btn">Salvar Imagem</button>
+    </div>
+
+    <div id="pixel-editor-toolbar" class="pixel-toolbar">
+      <button type="button" class="btn btn-sm img-tool active" data-tool="pincel" title="Pincel">Pincel</button>
+      <button type="button" class="btn btn-sm img-tool" data-tool="borracha" title="Borracha">Borracha</button>
+      <button type="button" class="btn btn-sm img-tool" data-tool="balde" title="Balde de preenchimento">Balde</button>
+      <button type="button" class="btn btn-sm img-tool" data-tool="contagotas" title="Capturar cor do pixel">Conta-gotas</button>
+      <div class="toolbar-sep"></div>
+      <button type="button" class="btn btn-sm" id="img-mirror-btn" title="Espelhar traço horizontalmente">Espelho X</button>
+      <button type="button" class="btn btn-sm" id="img-undo-btn" title="Desfazer (Ctrl+Z)" disabled>↶</button>
+      <button type="button" class="btn btn-sm" id="img-redo-btn" title="Refazer (Ctrl+Y)" disabled>↷</button>
+      <button type="button" class="btn btn-sm" id="img-clear-btn" title="Limpar grade">Limpar</button>
+      <button type="button" class="btn btn-sm" id="img-export-png-btn" title="Baixar PNG">PNG</button>
+    </div>
+
+    <div class="pixel-studio-grid">
+      <div class="pixel-canvas-stage">
+        <canvas id="pixel-canvas" width="320" height="320"></canvas>
       </div>
+      <aside class="pixel-studio-side">
+        <div class="pixel-side-block">
+          <span class="modal-label">Prévia Real</span>
+          <div class="pixel-preview-box">
+            <canvas id="pixel-live-preview" width="16" height="16"></canvas>
+          </div>
+        </div>
+        <div class="pixel-side-block">
+          <span class="modal-label">Cor Atual</span>
+          <input type="color" id="img-color-picker" value="#f97316" title="Cor ativa" class="pixel-color-input" />
+        </div>
+        <div class="pixel-side-block">
+          <span class="modal-label">Paleta Rápida</span>
+          <div id="pixel-palette" class="pixel-palette"></div>
+        </div>
+      </aside>
+    </div>
+
+    <div class="modal-footer">
+      <button type="button" class="btn" id="close-image-modal">Cancelar</button>
+      <button type="button" class="btn btn-run" id="save-image-btn">Salvar Sprite</button>
     </div>
   </div>
+</div>
 
-  <!-- RESIZE HANDLE -->
-  <div id="resize-handle"></div>
-
-  <!-- OUTPUT PANEL -->
-  <div id="output-panel">
-    <div class="output-header">
-      <span class="title"><img src="assets/crabcode_logo.png" alt="CrabCode" style="height:14px;vertical-align:middle;margin-right:5px;">CrabCode Output</span>
-      <button class="btn" id="btn-clear-output" style="padding:4px 8px;font-size:12px">Limpar</button>
-    </div>
-    <div class="output-body" id="output-body">
-      <div id="interface-canvas" style="display:none;position:absolute;inset:0;width:100%;height:100%;overflow:hidden;"></div>
-      <div class="output-empty">
-        <div class="crab"><img src="assets/crabcode_logo.png" alt="CrabCode" style="width:48px;height:48px;"></div>
-        <div>Pressione <strong>▶ Rodar</strong> ou <strong>Ctrl+Enter</strong></div>
-        <div>para executar seu código CrabCode</div>
-      </div>
+<!-- TEMPLATES MODAL (Ctrl+K) -->
+<div id="templates-modal" class="modal-overlay" style="display:none" role="dialog" aria-modal="true">
+  <div class="modal-box modal-box-lg">
+    <h2 class="modal-title">Modelos Rápidos CrabCode</h2>
+    <p class="modal-sub">Escolha um ponto de partida pronto para executar e explorar recursos avançados da IDE.</p>
+    <div id="templates-grid" class="templates-grid"></div>
+    <div class="modal-footer">
+      <button type="button" class="btn" id="close-templates-modal">Fechar</button>
     </div>
   </div>
 </div>
@@ -210,7 +323,7 @@
 <div id="autocomplete-popup" class="autocomplete-popup"></div>
 
 <!-- PRESENTATION EXIT BUTTON -->
-<button class="btn-presentation-exit" id="btn-presentation-exit">✕ Sair da Apresentação</button>
+<button type="button" class="btn-presentation-exit" id="btn-presentation-exit">✕ Sair da Apresentação</button>
 
 <script type="module" src="js/main.js"></script>
 </body>

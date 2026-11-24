@@ -1,7 +1,11 @@
-﻿// js/language.js
+// js/language.js
 // CrabCode language engine: TokenDef, Lexer, Parser, Transpiler, Runtime, CrabLibRegistry
+import { applyExtraLibsAndRanking } from './extra_libs.js';
+
 // ==================== CONSTANTS ====================
-const CRABCODE_CLOUD_URL = 'https://crabcode-api.onrender.com';
+const CRABCODE_CLOUD_URL = (typeof window !== 'undefined' && window.location && window.location.origin && window.location.origin !== 'null')
+  ? window.location.origin
+  : 'https://crabcode-api.onrender.com';
 
 // ==================== TOKEN DEFINITIONS ====================
 const TokenDef = {
@@ -15,6 +19,7 @@ const TokenDef = {
   OPERADOR: 'operador',
   ERRO: 'erro',
   PAREN: 'paren',
+  BRACKET: 'bracket',
   VIRGULA: 'virgula',
   NEWLINE: 'newline',
   WHITESPACE: 'ws',
@@ -43,6 +48,12 @@ const TokenDef = {
     ALEATORIO_ENTRE: { word: 'aleatorio entre', module: 'roxo' },
     JUROS_COMPOSTOS: { word: 'juros compostos', module: 'roxo' },
 
+    // Logical operators & boolean literals
+    OU: { word: 'ou', module: 'roxo' },
+    NAO: { word: 'nao', module: 'roxo' },
+    VERDADEIRO: { word: 'verdadeiro', module: 'azul' },
+    FALSO: { word: 'falso', module: 'azul' },
+
     // Azul (Tertiary)
     FUNCAO: { word: 'funcao', module: 'azul' },
     OBJETO_DE: { word: 'objeto de', module: 'azul' },
@@ -63,6 +74,7 @@ const TokenDef = {
     ENQUANTO: { word: 'enquanto', module: 'azul' },
     VEZES: { word: 'vezes', module: 'azul' },
     E_CONJ: { word: 'e', module: 'azul' },
+    E_LOGIC: { word: 'e', module: 'roxo' },
     SENAO: { word: 'senao', module: 'azul' },
 
     // Vermelho (Special)
@@ -98,12 +110,12 @@ const TokenDef = {
     PERGUNTE: { word: 'pergunte', module: 'azul' },
   },
 
-  // Characters that are always errors
-  illegalChars: new Set([';', '{', '}', '[', ']', '@', '&', '~', '`', '\\', '|', '?', '^', '%', '$']),
+  // Characters that are always errors (note: '[' and ']' are valid array literals, '%' is modulo)
+  illegalChars: new Set([';', '{', '}', '@', '&', '~', '`', '\\', '|', '?', '^', '$']),
 
   // Operators
-  operators: new Set(['+', '-', '*', '/', '>', '<', '=', '!']),
-  multiCharOps: ['!=', '>=', '<='],
+  operators: new Set(['+', '-', '*', '/', '%', '>', '<', '=', '!']),
+  multiCharOps: ['==', '!=', '>=', '<='],
 };
 
 // ==================== LEXER ====================
@@ -169,8 +181,10 @@ class Lexer {
         this.declaredObjects.add(name);
       } else if (rest.match(/^objeto\b/i)) {
         this.declaredObjects.add(name);
+      } else if (rest.startsWith('[')) {
+        this.declaredArrays.add(name);
       } else if (!rest.match(/^funcao\b/i)) {
-        // Detect array: not funcao/objeto, has comma at root level outside parens/strings
+        // Detect array: not funcao/objeto, has comma at root level outside parens/brackets/strings
         let depth = 0;
         let hasRootComma = false;
         let inStr = false, strChar = '';
@@ -178,8 +192,8 @@ class Lexer {
           const c = rest[ci];
           if (inStr) { if (c === strChar) inStr = false; continue; }
           if (c === '"' || c === "'") { inStr = true; strChar = c; continue; }
-          if (c === '(') depth++;
-          else if (c === ')') depth--;
+          if (c === '(' || c === '[') depth++;
+          else if (c === ')' || c === ']') depth--;
           else if (c === ',' && depth === 0) { hasRootComma = true; break; }
           else if (c === '#') break;
         }
@@ -187,7 +201,7 @@ class Lexer {
       }
     }
 
-    // Pre-pass: register exports from imported libraries and CSV datasets (lazy-loading awareness)
+    // Pre-pass: register exports from imported libraries (recursively for meta-libs) and CSV datasets
     const importeRe = /^\s*importe\s+([a-zA-ZÀ-ÿ_][a-zA-ZÀ-ÿ0-9_]*)/gim;
     let im;
     const _csvDatasets = this._csvDatasets;
@@ -196,17 +210,10 @@ class Lexer {
       const libName = im[1];
       const lib = this._registry ? this._registry.get(libName) : null;
       if (lib) {
-        if (lib.dependencies) {
-          for (const depName of lib.dependencies) {
-            const depLib = this._registry ? this._registry.get(depName) : null;
-            if (depLib && depLib.exports) {
-              for (const expName of depLib.exports) this.declaredVars.add(expName);
-            }
-          }
-        }
-        if (lib.exports) {
-          for (const expName of lib.exports) this.declaredVars.add(expName);
-        }
+        const resolved = this._registry.getResolvedExports
+          ? this._registry.getResolvedExports(libName)
+          : (lib.exports || []);
+        for (const expName of resolved) this.declaredVars.add(expName);
       } else if (_csvMap[libName]) {
         const ds = _csvMap[libName];
         for (const col of ds.columns) {
@@ -304,6 +311,13 @@ class Lexer {
         continue;
       }
 
+      // Square brackets for array literals: [1, 2, 3], [[1,2],[3,4]]
+      if (ch === '[' || ch === ']') {
+        this.tokens.push({ type: 'BRACKET', value: ch, module: 'bracket', line: this.line, col: this.col });
+        this.advance();
+        continue;
+      }
+
       // Comma
       if (ch === ',') {
         this.tokens.push({ type: 'VIRGULA', value: ',', module: 'virgula', line: this.line, col: this.col });
@@ -335,14 +349,37 @@ class Lexer {
         continue;
       }
 
-      // Numbers  
-      if (/[0-9]/.test(ch) || (ch === '.' && this.pos + 1 < this.source.length && /[0-9]/.test(this.source[this.pos + 1]))) {
+      // Numbers (including scientific notation like 6e14, 1.6e-19, 1E+6)
+      // Do not consume leading '.' as decimal float right after IDENTIFIER/')'/']' (e.g. arr.3)
+      const prevTokForDot = (() => {
+        for (let bk = this.tokens.length - 1; bk >= 0; bk--) {
+          if (this.tokens[bk].type !== 'WS') return this.tokens[bk];
+        }
+        return null;
+      })();
+      const allowLeadingDot = !(prevTokForDot && (
+        prevTokForDot.type === 'IDENTIFIER' ||
+        (prevTokForDot.type === 'PAREN' && prevTokForDot.value === ')') ||
+        (prevTokForDot.type === 'BRACKET' && prevTokForDot.value === ']')
+      ));
+      if (/[0-9]/.test(ch) || (ch === '.' && allowLeadingDot && this.pos + 1 < this.source.length && /[0-9]/.test(this.source[this.pos + 1]))) {
         let start = this.pos;
         let startCol = this.col;
         let hasDot = false;
         while (this.pos < this.source.length && (/[0-9]/.test(this.source[this.pos]) || (this.source[this.pos] === '.' && !hasDot))) {
           if (this.source[this.pos] === '.') hasDot = true;
           this.advance();
+        }
+        // Optional scientific exponent: e/E followed by optional +/- and at least one digit
+        if (this.pos < this.source.length && (this.source[this.pos] === 'e' || this.source[this.pos] === 'E')) {
+          let look = this.pos + 1;
+          if (look < this.source.length && (this.source[look] === '+' || this.source[look] === '-')) look++;
+          if (look < this.source.length && /[0-9]/.test(this.source[look])) {
+            this.advance(look - this.pos);
+            while (this.pos < this.source.length && /[0-9]/.test(this.source[this.pos])) {
+              this.advance();
+            }
+          }
         }
         this.tokens.push({ type: 'NUMBER', value: this.source.substring(start, this.pos), module: 'numero', line: this.line, col: startCol });
         continue;
@@ -407,13 +444,44 @@ class Lexer {
         const word = this.source.substring(start, this.pos);
         const wordLower = word.toLowerCase();
 
+        // Helper: previous non-whitespace token on current line
+        let prevNonWs = null;
+        for (let bk = this.tokens.length - 1; bk >= 0; bk--) {
+          if (this.tokens[bk].type === 'NEWLINE') break;
+          if (this.tokens[bk].type === 'WS') continue;
+          prevNonWs = this.tokens[bk];
+          break;
+        }
+
+        // Immediately after 'importe' -> ALWAYS an identifier (library/dataset name), e.g. 'importe texto'
+        if (prevNonWs && prevNonWs.type === 'IMPORTE') {
+          this.tokens.push({ type: 'IDENTIFIER', value: word, module: 'laranja', line: startLine, col: startCol });
+          continue;
+        }
+
+        // Immediately after 'defina' or 'altere' -> ALWAYS a variable identifier, e.g. 'defina dados como ...', 'defina cor como ...'
+        if (prevNonWs && (prevNonWs.type === 'DEFINA' || prevNonWs.type === 'ALTERE')) {
+          this.tokens.push({ type: 'IDENTIFIER', value: word, module: 'branco', line: startLine, col: startCol });
+          continue;
+        }
+
+        // Immediately after '.' -> ALWAYS a property identifier, e.g. 'obj.texto', 'obj.dados'
+        if (prevNonWs && prevNonWs.type === 'PONTO') {
+          this.tokens.push({ type: 'IDENTIFIER', value: word, module: 'branco', line: startLine, col: startCol });
+          continue;
+        }
+
         // Check keywords
+        const FORMAT_KEYS = new Set(['TEXTO', 'DESTAQUE', 'APRESENTACAO', 'APRESENTACAO_ALT', 'DADOS', 'TABELA', 'GRAFICO', 'ESTATISTICAS', 'CIENTIFICA']);
         let found = false;
         for (const [key, def] of Object.entries(TokenDef.types)) {
           if (def.word === wordLower) {
+            // Format tokens are context-sensitive: ONLY immediately after 'em'
+            if (FORMAT_KEYS.has(key)) {
+              if (!prevNonWs || prevNonWs.type !== 'EM') continue;
+            }
             // Special case: 'rodar' needs '(' check for RODAR module
             if (key === 'RODAR') {
-              // Check if followed by '('
               let lookAhead = this.pos;
               while (lookAhead < this.source.length && /[ \t]/.test(this.source[lookAhead])) lookAhead++;
               if (this.source[lookAhead] === '(') {
@@ -421,17 +489,19 @@ class Lexer {
                 found = true;
                 break;
               }
-              // Not followed by ( => treat as identifier
               continue;
             }
-            // 'com' is special — only roxo in context of 'execute'
+            // 'com' is roxo in context of 'execute' (com N amostras) OR 'sprite' in interface mode (sprite ... com cor R G B)
             if (key === 'COM') {
-              let hasExecute = false;
+              let validCom = false;
               for (let i = this.tokens.length - 1; i >= 0; i--) {
                 if (this.tokens[i].type === 'NEWLINE') break;
-                if (this.tokens[i].type === 'EXECUTE') { hasExecute = true; break; }
+                if (this.tokens[i].type === 'EXECUTE' || (this._interfaceMode && this.tokens[i].type === 'SPRITE')) {
+                  validCom = true;
+                  break;
+                }
               }
-              if (hasExecute) {
+              if (validCom) {
                 this.tokens.push({ type: key, value: word, module: def.module, line: startLine, col: startCol });
                 found = true;
                 break;
@@ -469,10 +539,9 @@ class Lexer {
             }
             // 'loop' is special — only roxo in context of 'execute'
             if (key === 'LOOP') {
-              // loop must be followed by '(' and have EXECUTE earlier on this line
               let lookAhead = this.pos;
               while (lookAhead < this.source.length && /[ \t]/.test(this.source[lookAhead])) lookAhead++;
-              if (this.source[lookAhead] !== '(') continue; // not followed by ( => identifier
+              if (this.source[lookAhead] !== '(') continue;
               let hasExecute = false;
               for (let i = this.tokens.length - 1; i >= 0; i--) {
                 if (this.tokens[i].type === 'NEWLINE') break;
@@ -485,12 +554,11 @@ class Lexer {
               }
               continue;
             }
-            // 'e' is special — only azul in context of 'aleatorio entre X e Y'
+            // 'e' as E_CONJ in 'aleatorio entre X e Y'
             if (key === 'E_CONJ') {
-              // Check context: is there an 'ALEATORIO_ENTRE' earlier on this line?
               let hasAleatorio = false;
               for (let i = this.tokens.length - 1; i >= 0; i--) {
-                if (this.tokens[i].type === 'NEWLINE') break;
+                if (this.tokens[i].type === 'NEWLINE' || this.tokens[i].type === 'SE' || this.tokens[i].type === 'ENQUANTO') break;
                 if (this.tokens[i].type === 'ALEATORIO_ENTRE') { hasAleatorio = true; break; }
               }
               if (hasAleatorio) {
@@ -498,8 +566,33 @@ class Lexer {
                 found = true;
                 break;
               }
-              // Not in aleatorio context => identifier
               continue;
+            }
+            // 'e' as logical AND (E_LOGIC) inside 'se' or 'enquanto' condition
+            if (key === 'E_LOGIC') {
+              let inCond = false;
+              for (let i = this.tokens.length - 1; i >= 0; i--) {
+                if (this.tokens[i].type === 'NEWLINE' || this.tokens[i].type === 'SENAO') break;
+                if (this.tokens[i].type === 'SE' || this.tokens[i].type === 'ENQUANTO') { inCond = true; break; }
+              }
+              if (inCond) {
+                this.tokens.push({ type: key, value: word, module: def.module, line: startLine, col: startCol });
+                found = true;
+                break;
+              }
+              continue;
+            }
+            // 'ou' / 'nao' logical operators — only when not a declared variable
+            if (key === 'OU' || key === 'NAO') {
+              if (this.declaredVars.has(word)) continue;
+              let inCond = false;
+              for (let i = this.tokens.length - 1; i >= 0; i--) {
+                if (this.tokens[i].type === 'NEWLINE') break;
+                if (this.tokens[i].type === 'SE' || this.tokens[i].type === 'ENQUANTO' || this.tokens[i].type === 'EXECUTE' || this.tokens[i].type === 'COMO' || this.tokens[i].type === 'PARA') {
+                  inCond = true; break;
+                }
+              }
+              if (!inCond) continue;
             }
             // 'para' is special — only roxo in context of 'altere VAR para EXPR'
             if (key === 'PARA') {
@@ -586,26 +679,38 @@ class Lexer {
               continue;
             }
             // Amarelo tokens — only active in interface mode
-            if (key === 'AJUSTE' || key === 'GRID' || key === 'COR_AMARELO' || key === 'COR_DE_FUNDO') {
+            if (key === 'AJUSTE' || key === 'GRID' || key === 'COR_DE_FUNDO') {
               if (!this._interfaceMode) continue;
             }
-            // COR_DE_TEXTO — only after APRESENTE on same line, in interface mode
+            // COR_AMARELO ('cor') — ONLY immediately after COM in interface mode (e.g. sprite reto(...) com cor R G B)
+            if (key === 'COR_AMARELO') {
+              if (!this._interfaceMode || !prevNonWs || prevNonWs.type !== 'COM') continue;
+            }
+            // COR_DE_TEXTO — after APRESENTE or EXECUTE on same line, in interface mode
             if (key === 'COR_DE_TEXTO') {
               if (!this._interfaceMode) continue;
-              let hasApresente = false;
+              let validCtx = false;
               for (let i = this.tokens.length - 1; i >= 0; i--) {
                 if (this.tokens[i].type === 'NEWLINE') break;
-                if (this.tokens[i].type === 'APRESENTE') { hasApresente = true; break; }
+                if (this.tokens[i].type === 'APRESENTE' || this.tokens[i].type === 'EXECUTE') { validCtx = true; break; }
               }
-              if (!hasApresente) continue;
+              if (!validCtx) continue;
             }
             // Sprite tokens — only active in interface mode
             if (key === 'SPRITE' || key === 'RETO' || key === 'CURVO') {
               if (!this._interfaceMode) continue;
             }
-            // Interactive element tokens — only active in interface mode
+            // Interactive element tokens — active in interface mode after FUNCAO, funcao(), or EM
             if (key === 'BOTAO' || key === 'TOGGLE' || key === 'SLIDER' || key === 'SELETOR' || key === 'DIGITE' || key === 'PERGUNTE') {
               if (!this._interfaceMode) continue;
+              let validInteractiveCtx = prevNonWs && (prevNonWs.type === 'FUNCAO' || prevNonWs.type === 'EM');
+              if (!validInteractiveCtx && prevNonWs && prevNonWs.type === 'PAREN' && prevNonWs.value === ')') {
+                for (let bi = this.tokens.length - 1; bi >= 0; bi--) {
+                  if (this.tokens[bi].type === 'NEWLINE') break;
+                  if (this.tokens[bi].type === 'FUNCAO') { validInteractiveCtx = true; break; }
+                }
+              }
+              if (!validInteractiveCtx) continue;
             }
             this.tokens.push({ type: key, value: word, module: def.module, line: startLine, col: startCol });
             found = true;
@@ -614,14 +719,7 @@ class Lexer {
         }
 
         if (!found) {
-          // Check if this identifier follows 'importe' — color library name as laranja
-          let idModule = 'branco';
-          for (let bk = this.tokens.length - 1; bk >= 0; bk--) {
-            if (this.tokens[bk].type === 'WS') continue;
-            if (this.tokens[bk].type === 'IMPORTE') idModule = 'laranja';
-            break;
-          }
-          this.tokens.push({ type: 'IDENTIFIER', value: word, module: idModule, line: startLine, col: startCol });
+          this.tokens.push({ type: 'IDENTIFIER', value: word, module: 'branco', line: startLine, col: startCol });
         }
         continue;
       }
@@ -689,13 +787,15 @@ class Parser {
   // ---- VALIDATION HELPERS ----
 
   // Validates a token sequence that represents an expression
-  // Reports: unbalanced parens, unknown function calls, empty expressions, operator misuse
+  // Reports: unbalanced parens/brackets, unknown function calls, empty expressions, operator misuse
   validateExpr(tokens, context) {
     if (!tokens || tokens.length === 0) return;
 
-    // 1. Balanced parentheses
+    // 1. Balanced parentheses & brackets
     let depth = 0;
     let lastOpenTok = null;
+    let bDepth = 0;
+    let lastOpenBracket = null;
     for (const t of tokens) {
       if (t.type === 'PAREN' && t.value === '(') { depth++; lastOpenTok = t; }
       else if (t.type === 'PAREN' && t.value === ')') {
@@ -704,18 +804,28 @@ class Parser {
           this.errors.push({ message: `Parêntese ')' sem abertura correspondente`, line: t.line, col: t.col, length: 1 });
           depth = 0;
         }
+      } else if (t.type === 'BRACKET' && t.value === '[') { bDepth++; lastOpenBracket = t; }
+      else if (t.type === 'BRACKET' && t.value === ']') {
+        bDepth--;
+        if (bDepth < 0) {
+          this.errors.push({ message: `Colchete ']' sem abertura correspondente`, line: t.line, col: t.col, length: 1 });
+          bDepth = 0;
+        }
       }
     }
     if (depth > 0 && lastOpenTok) {
       this.errors.push({ message: `Parêntese '(' não foi fechado`, line: lastOpenTok.line, col: lastOpenTok.col, length: 1 });
     }
+    if (bDepth > 0 && lastOpenBracket) {
+      this.errors.push({ message: `Colchete '[' não foi fechado`, line: lastOpenBracket.line, col: lastOpenBracket.col, length: 1 });
+    }
 
-    // 2. Operator at start or end (not counting unary minus edge case)
-    const meaningful = tokens.filter(t => t.type !== 'PAREN' && t.type !== 'VIRGULA');
+    // 2. Operator at start or end (allowing unary '-' and '!')
+    const meaningful = tokens.filter(t => t.type !== 'PAREN' && t.type !== 'BRACKET' && t.type !== 'VIRGULA');
     if (meaningful.length > 0) {
       const first = meaningful[0];
       const last = meaningful[meaningful.length - 1];
-      if (first.type === 'OPERATOR' && first.value !== '-') {
+      if (first.type === 'OPERATOR' && first.value !== '-' && first.value !== '!') {
         this.errors.push({ message: `Expressão começa com operador '${first.value}' inválido`, line: first.line, col: first.col, length: first.value.length });
       }
       if (last.type === 'OPERATOR') {
@@ -723,9 +833,10 @@ class Parser {
       }
     }
 
-    // 3. Two consecutive operators
+    // 3. Two consecutive operators (allow unary '-' or '!' as second operator, e.g. x = -5, a * -2)
     for (let i = 0; i < tokens.length - 1; i++) {
       if (tokens[i].type === 'OPERATOR' && tokens[i + 1].type === 'OPERATOR') {
+        if (tokens[i + 1].value === '-' || tokens[i + 1].value === '!') continue;
         this.errors.push({ message: `Dois operadores consecutivos: '${tokens[i].value}' e '${tokens[i+1].value}'`, line: tokens[i].line, col: tokens[i].col, length: tokens[i].value.length });
       }
     }
@@ -753,11 +864,15 @@ class Parser {
     }
   }
 
-  // Validates that a condition has a comparison operator
+  // Validates that a condition has a comparison operator or valid boolean expression
   validateCond(tokens, context) {
     if (!tokens || tokens.length === 0) return;
-    const hasComparison = tokens.some(t => t.type === 'OPERATOR' && ['>', '<', '=', '!=', '>=', '<='].includes(t.value));
-    if (!hasComparison) {
+    const hasComparison = tokens.some(t => t.type === 'OPERATOR' && ['>', '<', '=', '==', '!=', '>=', '<='].includes(t.value));
+    const hasBooleanExpr = tokens.some(t =>
+      t.type === 'VERDADEIRO' || t.type === 'FALSO' || t.type === 'NAO' ||
+      t.type === 'PONTO' || (t.type === 'IDENTIFIER' && this.declaredVars.has(t.value))
+    );
+    if (!hasComparison && !hasBooleanExpr) {
       const first = tokens[0];
       this.errors.push({ message: `Condição após '${context}' não tem operador de comparação (use >, <, =, !=, >=, <=)`, line: first.line, col: first.col, length: first.value.length });
     }
@@ -890,29 +1005,67 @@ class Parser {
       return;
     }
 
-    // Find RELATANDO and ENQUANTO at root depth (outside parens)
-    let relatandoIdx = -1, enquantoIdx = -1;
+    // Find RELATANDO, ENQUANTO, SE, SENAO, REPITA at root depth (outside parens/brackets)
+    let relatandoIdx = -1, enquantoIdx = -1, seIdx = -1, senaoIdx = -1, repitaIdx = -1;
     let depth = 0;
     for (let i = 3; i < tokens.length; i++) {
-      if (tokens[i].type === 'PAREN' && tokens[i].value === '(') depth++;
-      else if (tokens[i].type === 'PAREN' && tokens[i].value === ')') depth--;
-      else if (tokens[i].type === 'RELATANDO' && depth === 0) relatandoIdx = i;
-      else if (tokens[i].type === 'ENQUANTO' && depth === 0) enquantoIdx = i;
+      if ((tokens[i].type === 'PAREN' && tokens[i].value === '(') || (tokens[i].type === 'BRACKET' && tokens[i].value === '[')) depth++;
+      else if ((tokens[i].type === 'PAREN' && tokens[i].value === ')') || (tokens[i].type === 'BRACKET' && tokens[i].value === ']')) depth--;
+      else if (depth === 0) {
+        if (tokens[i].type === 'RELATANDO' && relatandoIdx === -1) relatandoIdx = i;
+        else if (tokens[i].type === 'ENQUANTO' && enquantoIdx === -1) enquantoIdx = i;
+        else if (tokens[i].type === 'SE' && seIdx === -1) seIdx = i;
+        else if (tokens[i].type === 'SENAO' && senaoIdx === -1) senaoIdx = i;
+        else if (tokens[i].type === 'REPITA' && repitaIdx === -1) repitaIdx = i;
+      }
     }
 
-    let valueTokens, relatandoN = null, enquantoTokens = null;
+    let valueTokens, relatandoN = null, enquantoTokens = null, condTokens = null, elseTokens = null, repitaTokens = null;
 
-    // Determine value tokens — everything before the first modifier (relatando or enquanto)
-    const firstModifier = [relatandoIdx, enquantoIdx].filter(i => i !== -1).reduce((a, b) => Math.min(a, b), tokens.length);
+    // Value tokens stop at the earliest root-level modifier
+    const firstModifier = [relatandoIdx, enquantoIdx, seIdx, repitaIdx]
+      .filter(i => i !== -1)
+      .reduce((a, b) => Math.min(a, b), tokens.length);
     valueTokens = tokens.slice(3, firstModifier);
+
+    // Parse se / senao modifier
+    if (seIdx !== -1) {
+      const condEnd = [senaoIdx, repitaIdx, enquantoIdx, relatandoIdx]
+        .filter(i => i > seIdx)
+        .reduce((a, b) => Math.min(a, b), tokens.length);
+      condTokens = tokens.slice(seIdx + 1, condEnd);
+      if (condTokens.length === 0) {
+        this.errors.push({ message: `'se' precisa de uma condição. Ex: altere x para 1 se y > 0`, line: tokens[seIdx].line, col: tokens[seIdx].col, length: tokens[seIdx].value.length });
+      } else {
+        this.validateCond(condTokens, 'se');
+      }
+      if (senaoIdx !== -1 && senaoIdx > seIdx) {
+        const elseEnd = [repitaIdx, enquantoIdx, relatandoIdx]
+          .filter(i => i > senaoIdx)
+          .reduce((a, b) => Math.min(a, b), tokens.length);
+        elseTokens = tokens.slice(senaoIdx + 1, elseEnd);
+        if (elseTokens.length > 0) this.validateExpr(elseTokens, 'senao');
+      }
+    }
+
+    // Parse repita modifier
+    if (repitaIdx !== -1) {
+      const repEnd = [seIdx, enquantoIdx, relatandoIdx]
+        .filter(i => i > repitaIdx)
+        .reduce((a, b) => Math.min(a, b), tokens.length);
+      repitaTokens = tokens.slice(repitaIdx + 1, repEnd).filter(t => t.type !== 'VEZES');
+      if (repitaTokens.length === 0) {
+        this.errors.push({ message: `'repita' precisa de um número de repetições. Ex: repita 5`, line: tokens[repitaIdx].line, col: tokens[repitaIdx].col, length: tokens[repitaIdx].value.length });
+      } else {
+        this.validateExpr(repitaTokens, 'repita');
+      }
+    }
 
     // Parse relatando modifier
     const hasRelatando = relatandoIdx !== -1;
     if (hasRelatando) {
       const afterRelatando = tokens.slice(relatandoIdx + 1);
-      // Check for relatando(N) — next token is '('
       if (afterRelatando.length > 0 && afterRelatando[0].type === 'PAREN' && afterRelatando[0].value === '(') {
-        // Collect N inside parens
         let j = 1, nTokens = [], d = 1;
         while (j < afterRelatando.length && d > 0) {
           if (afterRelatando[j].type === 'PAREN' && afterRelatando[j].value === '(') d++;
@@ -924,19 +1077,16 @@ class Parser {
         if (relatandoN.length === 0) {
           this.errors.push({ message: `'relatando()' precisa de um número. Ex: relatando(5)`, line: tokens[relatandoIdx].line, col: tokens[relatandoIdx].col, length: tokens[relatandoIdx].value.length });
         }
-        // relatando(N) + enquanto is invalid
         if (enquantoIdx !== -1) {
           this.errors.push({ message: `'relatando(N) enquanto' não é permitido — use 'relatando enquanto' (sem parênteses) ou só 'relatando(N)'`, line: tokens[enquantoIdx].line, col: tokens[enquantoIdx].col, length: tokens[enquantoIdx].value.length });
-          enquantoIdx = -1; // ignore the enquanto
+          enquantoIdx = -1;
         }
       }
-      // else bare 'relatando' — no N, enquanto still possible
     }
 
-    // Parse enquanto modifier (independent of relatando)
+    // Parse enquanto modifier
     if (enquantoIdx !== -1) {
       enquantoTokens = tokens.slice(enquantoIdx + 1);
-      // If relatando(N) was parsed, enquantoTokens might include garbage — already nulled above
       if (enquantoTokens.length === 0) {
         this.errors.push({ message: `'enquanto' precisa de uma condição. Ex: enquanto valor < 10`, line: tokens[enquantoIdx].line, col: tokens[enquantoIdx].col, length: tokens[enquantoIdx].value.length });
       } else {
@@ -955,8 +1105,11 @@ class Parser {
       type: 'AlterVar',
       name: nameToken.value,
       valueTokens,
-      relatandoN,       // token array for N, or null
-      enquantoTokens,   // token array for condition, or null
+      condTokens,
+      elseTokens,
+      repitaTokens,
+      relatandoN,
+      enquantoTokens,
       relatar: relatandoIdx !== -1,
       line: tokens[0].line
     });
@@ -1106,25 +1259,40 @@ class Parser {
         line: tokens[0].line
       });
     } else if (tokens[3].type === 'SPRITE' && this._interfaceMode) {
-      // defina X como sprite reto(x1,y1, x2,y2, ...) — polygon
-      // defina X como sprite curvo(r)              — circle
-      // defina X como sprite KEY                   — pixel art image ref
+      // defina X como sprite reto(x1,y1, x2,y2, ...) [com cor R G B]
+      // defina X como sprite curvo(r) [com cor R G B]
+      // defina X como sprite "KEY" | KEY
       const spriteKindToken = tokens[4];
       if (!spriteKindToken) {
         this.errors.push({ message: `'sprite' precisa de 'reto(...)' ou 'curvo(r)' ou o nome de uma imagem`, line: tokens[3].line, col: tokens[3].col, length: tokens[3].value.length });
         return;
       }
+      // Helper: parse optional 'com cor R G B' at end of sprite declaration
+      const parseSpriteColor = (startIdx) => {
+        const corIdx = tokens.findIndex((t, idx) => idx >= startIdx && t.type === 'COR_AMARELO');
+        if (corIdx === -1) return null;
+        const cNums = [];
+        for (let ci = corIdx + 1; ci < tokens.length && cNums.length < 3; ci++) {
+          if (tokens[ci].type === 'NUMBER') cNums.push(Number(tokens[ci].value));
+        }
+        return cNums.length === 3 ? { r: cNums[0], g: cNums[1], b: cNums[2] } : null;
+      };
       if (spriteKindToken.type === 'RETO') {
-        // Collect numbers inside parens
         const parenOpen = tokens[5];
         if (!parenOpen || parenOpen.type !== 'PAREN' || parenOpen.value !== '(') {
           this.errors.push({ message: `'sprite reto' precisa de pontos entre parênteses. Ex: sprite reto(0,0, 10,0, 5,10)`, line: spriteKindToken.line, col: spriteKindToken.col, length: spriteKindToken.value.length });
           return;
         }
         const nums = [];
+        let closeIdx = tokens.length;
         for (let i = 6; i < tokens.length; i++) {
-          if (tokens[i].type === 'NUMBER') nums.push(Number(tokens[i].value));
-          if (tokens[i].type === 'PAREN' && tokens[i].value === ')') break;
+          if (tokens[i].type === 'PAREN' && tokens[i].value === ')') { closeIdx = i; break; }
+          if (tokens[i].type === 'OPERATOR' && tokens[i].value === '-' && tokens[i + 1]?.type === 'NUMBER') {
+            nums.push(-Number(tokens[i + 1].value));
+            i++;
+          } else if (tokens[i].type === 'NUMBER') {
+            nums.push(Number(tokens[i].value));
+          }
         }
         if (nums.length < 6 || nums.length % 2 !== 0) {
           this.errors.push({ message: `'sprite reto' precisa de pelo menos 3 pontos (6 números). Ex: sprite reto(0,0, 10,0, 5,10)`, line: spriteKindToken.line, col: spriteKindToken.col, length: spriteKindToken.value.length });
@@ -1132,7 +1300,8 @@ class Parser {
         }
         const points = [];
         for (let i = 0; i < nums.length; i += 2) points.push([nums[i], nums[i + 1]]);
-        this.ast.push({ type: 'DefineSpriteReto', name: nameToken.value, points, line: tokens[0].line });
+        const color = parseSpriteColor(closeIdx + 1);
+        this.ast.push({ type: 'DefineSpriteReto', name: nameToken.value, points, color, line: tokens[0].line });
       } else if (spriteKindToken.type === 'CURVO') {
         const parenOpen = tokens[5];
         if (!parenOpen || parenOpen.type !== 'PAREN' || parenOpen.value !== '(') {
@@ -1141,21 +1310,23 @@ class Parser {
         }
         const rToken = tokens[6];
         const radius = rToken && rToken.type === 'NUMBER' ? Number(rToken.value) : 5;
-        this.ast.push({ type: 'DefineSpriteCircle', name: nameToken.value, radius, line: tokens[0].line });
-      } else if (spriteKindToken.type === 'IDENTIFIER') {
-        // Image reference (Phase 14)
+        const closeIdx = tokens.findIndex((t, idx) => idx >= 6 && t.type === 'PAREN' && t.value === ')');
+        const color = parseSpriteColor(closeIdx !== -1 ? closeIdx + 1 : 7);
+        this.ast.push({ type: 'DefineSpriteCircle', name: nameToken.value, radius, color, line: tokens[0].line });
+      } else if (spriteKindToken.type === 'IDENTIFIER' || spriteKindToken.type === 'STRING') {
+        // Image reference: sprite "nave" or sprite nave
         this.ast.push({ type: 'DefineSpriteImage', name: nameToken.value, imageKey: spriteKindToken.value, line: tokens[0].line });
       } else {
         this.errors.push({ message: `'sprite' espera 'reto', 'curvo' ou o nome de uma imagem`, line: spriteKindToken.line, col: spriteKindToken.col, length: spriteKindToken.value.length });
       }
     } else {
       const valueTokens = tokens.slice(3);
-      // Check if it's an array: has comma at root level (outside parens)
+      // Check if it's an array: has comma at root level (outside parens AND brackets)
       let depth = 0;
       let hasRootComma = false;
       for (const t of valueTokens) {
-        if (t.type === 'PAREN' && t.value === '(') depth++;
-        else if (t.type === 'PAREN' && t.value === ')') depth--;
+        if ((t.type === 'PAREN' && t.value === '(') || (t.type === 'BRACKET' && t.value === '[')) depth++;
+        else if ((t.type === 'PAREN' && t.value === ')') || (t.type === 'BRACKET' && t.value === ']')) depth--;
         else if (t.type === 'VIRGULA' && depth === 0) { hasRootComma = true; break; }
       }
       if (hasRootComma) {
@@ -1168,8 +1339,8 @@ class Parser {
         // Validate each item
         let cur = [], d2 = 0;
         for (const t of valueTokens) {
-          if (t.type === 'PAREN' && t.value === '(') { d2++; cur.push(t); }
-          else if (t.type === 'PAREN' && t.value === ')') { d2--; cur.push(t); }
+          if ((t.type === 'PAREN' && t.value === '(') || (t.type === 'BRACKET' && t.value === '[')) { d2++; cur.push(t); }
+          else if ((t.type === 'PAREN' && t.value === ')') || (t.type === 'BRACKET' && t.value === ']')) { d2--; cur.push(t); }
           else if (t.type === 'VIRGULA' && d2 === 0) { this.validateExpr(cur, 'array item'); cur = []; }
           else cur.push(t);
         }
@@ -1187,17 +1358,39 @@ class Parser {
   }
 
   _parseDefinaInteractive(tokens, nameToken, kindToken) {
-    // Extract first string arg if present: funcao botao("texto")
-    const kind = kindToken.type.toLowerCase(); // botao, toggle, slider, seletor, digite, pergunte
+    // Supports:
+    //   funcao botao("label") execute EXPR  |  funcao botao("label") altere X para Y
+    //   funcao toggle("label")
+    //   funcao slider("label", MIN, MAX)  |  funcao slider("label") MIN, MAX
+    //   funcao seletor("label", "a", "b") |  funcao seletor("label") "a", "b"
+    //   funcao digite("placeholder")      |  funcao digite
+    //   funcao pergunte("pergunta")
+    const kind = kindToken.type.toLowerCase();
     let labelText = '';
     let extraArgs = [];
     let effectTokens = [];
 
-    // Find opening paren after kind token
+    const extractLiterals = (toks) => {
+      const vals = [];
+      for (let k = 0; k < toks.length; k++) {
+        const tk = toks[k];
+        if (tk.type === 'STRING') {
+          vals.push(tk.value);
+        } else if (tk.type === 'OPERATOR' && tk.value === '-' && toks[k + 1]?.type === 'NUMBER') {
+          vals.push(-Number(toks[k + 1].value));
+          k++;
+        } else if (tk.type === 'NUMBER') {
+          vals.push(Number(tk.value));
+        } else if (tk.type === 'IDENTIFIER' && (kind === 'seletor')) {
+          vals.push(tk.value);
+        }
+      }
+      return vals;
+    };
+
     const kindIdx = tokens.indexOf(kindToken);
     let parenIdx = kindIdx + 1;
     if (parenIdx < tokens.length && tokens[parenIdx].type === 'PAREN' && tokens[parenIdx].value === '(') {
-      // Collect contents up to closing paren
       let depth = 1;
       let inside = [];
       let j = parenIdx + 1;
@@ -1212,16 +1405,19 @@ class Parser {
         }
         j++;
       }
-      // First STRING token is the label
-      const strToken = inside.find(t => t.type === 'STRING');
-      if (strToken) labelText = strToken.value;
-      // NUMBERs after first comma = extra args (slider: min, max; seletor: options as strings)
-      const extraTokens = inside.filter(t => t.type === 'NUMBER' || t.type === 'STRING');
-      extraArgs = extraTokens.slice(1).map(t => t.value); // skip first (label)
-      // Everything after closing paren = effect body
-      effectTokens = tokens.slice(j);
+      const insideVals = extractLiterals(inside);
+      if (insideVals.length > 0) {
+        labelText = String(insideVals[0]);
+        extraArgs = insideVals.slice(1);
+      }
+      const afterTokens = tokens.slice(j);
+      // For slider/seletor: if extraArgs empty and afterTokens are literals (not execute/altere), parse them as extraArgs
+      if ((kind === 'slider' || kind === 'seletor') && extraArgs.length === 0 && afterTokens.length > 0 && !['EXECUTE', 'ALTERE'].includes(afterTokens[0].type)) {
+        extraArgs = extractLiterals(afterTokens);
+      } else {
+        effectTokens = afterTokens;
+      }
     } else {
-      // No parens — effect is everything after kind
       effectTokens = tokens.slice(kindIdx + 1);
     }
 
@@ -1284,6 +1480,15 @@ class Parser {
         });
       }
     }
+
+    // Interface mode: also support 'defina X como funcao() botao("...") ...'
+    if (this._interfaceMode && params.length === 0 && i < tokens.length) {
+      const elemT = tokens[i];
+      if (elemT && ['BOTAO', 'TOGGLE', 'SLIDER', 'SELETOR', 'DIGITE', 'PERGUNTE'].includes(elemT.type)) {
+        this._parseDefinaInteractive(tokens, nameToken, elemT);
+        return;
+      }
+    }
     // If no '(' found, params stays [] and body starts from current i
 
     // Remaining tokens are the function body (can contain multiple statements)
@@ -1318,8 +1523,28 @@ class Parser {
       return;
     }
 
-    // Interface mode: execute cor de fundo R G B
+    // Interface mode: execute cor de fundo R G B [se COND [senao [cor de fundo] R2 G2 B2]]
     if (this._interfaceMode && tokens[1] && tokens[1].type === 'COR_DE_FUNDO') {
+      const seIdxBg = tokens.findIndex((t, idx) => idx >= 2 && t.type === 'SE');
+      if (seIdxBg !== -1) {
+        const nums = tokens.slice(2, seIdxBg).filter(t => t.type === 'NUMBER').map(t => Number(t.value));
+        const afterSe = tokens.slice(seIdxBg + 1);
+        const senaoIdxBg = afterSe.findIndex(t => t.type === 'SENAO');
+        const condTokens = senaoIdxBg !== -1 ? afterSe.slice(0, senaoIdxBg) : afterSe;
+        const elseNums = senaoIdxBg !== -1
+          ? afterSe.slice(senaoIdxBg + 1).filter(t => t.type === 'NUMBER').map(t => Number(t.value))
+          : null;
+        this.ast.push({
+          type: 'ExecuteCorDeFundo',
+          r: nums[0] ?? 0,
+          g: nums[1] ?? 0,
+          b: nums[2] ?? 0,
+          condTokens,
+          elseRgb: elseNums && elseNums.length >= 3 ? { r: elseNums[0], g: elseNums[1], b: elseNums[2] } : null,
+          line: tokens[0].line
+        });
+        return;
+      }
       const nums = tokens.slice(2).filter(t => t.type === 'NUMBER').map(t => Number(t.value));
       this.ast.push({
         type: 'ExecuteCorDeFundo',
@@ -1331,13 +1556,41 @@ class Parser {
       return;
     }
 
-    // Check for 'com N amostras' FIRST — before any other branch that would return early
-    // execute EXPR com N amostras
+    // Interface mode: execute cor de texto R G B
+    if (this._interfaceMode && tokens[1] && tokens[1].type === 'COR_DE_TEXTO') {
+      const nums = tokens.slice(2).filter(t => t.type === 'NUMBER').map(t => Number(t.value));
+      this.ast.push({
+        type: 'ExecuteCorDeTexto',
+        r: nums[0] ?? 226,
+        g: nums[1] ?? 232,
+        b: nums[2] ?? 240,
+        line: tokens[0].line
+      });
+      return;
+    }
+
+    // Helper: find token type at depth 0 (outside parens and brackets)
+    const findAtDepth0 = (toks, type, startIdx = 0) => {
+      let d = 0;
+      for (let j = startIdx; j < toks.length; j++) {
+        if ((toks[j].type === 'PAREN' && toks[j].value === '(') || (toks[j].type === 'BRACKET' && toks[j].value === '[')) d++;
+        else if ((toks[j].type === 'PAREN' && toks[j].value === ')') || (toks[j].type === 'BRACKET' && toks[j].value === ']')) d--;
+        else if (toks[j].type === type && d === 0) return j;
+      }
+      return -1;
+    };
+
+    // Check for 'com N amostras' FIRST (at depth 0)
     let comIdx = -1;
-    for (let j = 1; j < tokens.length; j++) {
-      if (tokens[j].type === 'COM') {
-        const hasAmostras = tokens.slice(j + 1).some(t => t.type === 'AMOSTRAS');
-        if (hasAmostras) { comIdx = j; break; }
+    {
+      let d = 0;
+      for (let j = 1; j < tokens.length; j++) {
+        if ((tokens[j].type === 'PAREN' && tokens[j].value === '(') || (tokens[j].type === 'BRACKET' && tokens[j].value === '[')) d++;
+        else if ((tokens[j].type === 'PAREN' && tokens[j].value === ')') || (tokens[j].type === 'BRACKET' && tokens[j].value === ']')) d--;
+        else if (tokens[j].type === 'COM' && d === 0) {
+          const hasAmostras = tokens.slice(j + 1).some(t => t.type === 'AMOSTRAS');
+          if (hasAmostras) { comIdx = j; break; }
+        }
       }
     }
     if (comIdx !== -1) {
@@ -1345,11 +1598,8 @@ class Parser {
       return;
     }
 
-    // Find 'repita' first (can appear after any form)
-    let repitaIdx = -1;
-    for (let j = 1; j < tokens.length; j++) {
-      if (tokens[j].type === 'REPITA') { repitaIdx = j; break; }
-    }
+    // Find 'repita' at depth 0 (can appear after any form)
+    const repitaIdx = findAtDepth0(tokens, 'REPITA', 1);
 
     // Determine the "core" tokens (before repita if present)
     const coreTokens = repitaIdx !== -1 ? tokens.slice(0, repitaIdx) : tokens;
@@ -1397,22 +1647,15 @@ class Parser {
       return;
     }
 
-    // Find 'se' to determine conditional form (only in core tokens, start from index 1)
-    let seIdx = -1;
-    for (let j = 1; j < coreTokens.length; j++) {
-      if (coreTokens[j].type === 'SE' && seIdx === -1) seIdx = j;
-    }
+    // Find 'se' at depth 0 to determine conditional form
+    const seIdx = findAtDepth0(coreTokens, 'SE', 1);
 
     if (seIdx !== -1) {
-      // Conditional
       const exprTokens = coreTokens.slice(1, seIdx);
       let condTokens, elseTokens = null;
 
-      // Look for 'senao'
-      let senaoIdx = -1;
-      for (let j = seIdx + 1; j < coreTokens.length; j++) {
-        if (coreTokens[j].type === 'SENAO') { senaoIdx = j; break; }
-      }
+      // Look for 'senao' at depth 0
+      const senaoIdx = findAtDepth0(coreTokens, 'SENAO', seIdx + 1);
 
       if (senaoIdx !== -1) {
         condTokens = coreTokens.slice(seIdx + 1, senaoIdx);
@@ -1842,7 +2085,20 @@ class Parser {
         }
       }
     } else {
-      exprTokens = tokens.slice(1);
+      // Strip trailing yellow modifiers (ajuste/grid/cor de texto) if present without 'em'
+      let endIdx = tokens.length;
+      if (this._interfaceMode) {
+        let d = 0;
+        for (let j = 1; j < tokens.length; j++) {
+          if (tokens[j].type === 'PAREN' && tokens[j].value === '(') d++;
+          else if (tokens[j].type === 'PAREN' && tokens[j].value === ')') d--;
+          else if (d === 0 && (tokens[j].type === 'AJUSTE' || tokens[j].type === 'GRID' || tokens[j].type === 'COR_DE_TEXTO')) {
+            endIdx = j;
+            break;
+          }
+        }
+      }
+      exprTokens = tokens.slice(1, endIdx);
     }
 
     // Extract yellow (interface) modifiers: ajuste, grid, cor de texto
@@ -2093,17 +2349,10 @@ class Transpiler {
       if (node.type === 'ImportLib') {
         const _lib = this._registry ? this._registry.get(node.libName) : null;
         if (_lib) {
-          if (_lib.dependencies) {
-            for (const _depName of _lib.dependencies) {
-              const _depLib = this._registry.get(_depName);
-              if (_depLib && _depLib.exports) {
-                for (const _expName of _depLib.exports) this.declaredVars.add(_expName);
-              }
-            }
-          }
-          if (_lib.exports) {
-            for (const _expName of _lib.exports) this.declaredVars.add(_expName);
-          }
+          const resolved = this._registry.getResolvedExports
+            ? this._registry.getResolvedExports(node.libName)
+            : (_lib.exports || []);
+          for (const _expName of resolved) this.declaredVars.add(_expName);
         } else {
           const _csvDs = this._csvDatasets;
           const _csvMatch = _csvDs.find(d => d.key === node.libName);
@@ -2160,6 +2409,7 @@ class Transpiler {
       case 'ExecuteLoop': return this.transpileExecuteLoop(node);
       case 'ExecuteAmostras': return this.transpileExecuteAmostras(node);
       case 'ExecuteCorDeFundo': return this.transpileExecuteCorDeFundo(node);
+      case 'ExecuteCorDeTexto': return this.transpileExecuteCorDeTexto(node);
       case 'DefineSpriteReto': return this.transpileDefineSpriteReto(node);
       case 'DefineSpriteCircle': return this.transpileDefineSpriteCircle(node);
       case 'DefineSpriteImage': return this.transpileDefineSpriteImage(node);
@@ -2179,17 +2429,25 @@ class Transpiler {
       const t = tokens[i];
       if (t.type === 'NUMBER') {
         parts.push(t.value);
+      } else if (t.type === 'VERDADEIRO') {
+        parts.push('true');
+      } else if (t.type === 'FALSO') {
+        parts.push('false');
+      } else if (t.type === 'NAO') {
+        parts.push('!');
+      } else if (t.type === 'OU') {
+        parts.push('||');
+      } else if (t.type === 'E_LOGIC') {
+        parts.push('&&');
       } else if (t.type === 'STRING') {
-        // String literal explícita — o conteúdo já está sem as aspas, só escapar aspas duplas internas
         parts.push('"' + t.value.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"');
       } else if (t.type === 'OPERATOR') {
-        // Map single = to === for equality comparison
-        if (t.value === '=') {
+        if (t.value === '=' || t.value === '==') {
           parts.push('===');
         } else {
           parts.push(t.value);
         }
-      } else if (t.type === 'PAREN') {
+      } else if (t.type === 'PAREN' || t.type === 'BRACKET') {
         parts.push(t.value);
       } else if (t.type === 'VIRGULA') {
         parts.push(',');
@@ -2236,12 +2494,19 @@ class Transpiler {
           parts.push('"' + strParts.join(' ') + '"');
         }
       } else if (t.type === 'PONTO') {
-        // Acesso de propriedade — une sem espaço ao próximo token
-        // O join(' ') no final adicionaria espaço, então embutimos o próximo token aqui
-        if (i + 1 < tokens.length && (tokens[i + 1].type === 'IDENTIFIER' || tokens[i + 1].type === 'NUMBER')) {
+        // Acesso de propriedade ou índice 1-based de lista (ex: lista.1 ou obj.chave)
+        if (i + 1 < tokens.length && tokens[i + 1].type === 'NUMBER') {
+          const idxNum = tokens[i + 1].value;
+          i++;
+          if (parts.length > 0) {
+            const last = parts.pop();
+            parts.push(`(Array.isArray(${last}) ? ${last}[(${idxNum}) - 1] : ${last}[${JSON.stringify(idxNum)}])`);
+          } else {
+            parts.push('.' + idxNum);
+          }
+        } else if (i + 1 < tokens.length && tokens[i + 1].type === 'IDENTIFIER') {
           const prop = tokens[i + 1].value;
           i++;
-          // Remove o último item de parts e o reune com .prop
           if (parts.length > 0) {
             const last = parts.pop();
             parts.push(last + '.' + prop);
@@ -2405,8 +2670,18 @@ class Transpiler {
       return this.transpileExecuteMathExpr(node);
     }
 
-    // repita
-    const repitaIdx = rest.findIndex(t => t.type === 'REPITA');
+    const findD0 = (arr, type, start = 0) => {
+      let d = 0;
+      for (let j = start; j < arr.length; j++) {
+        if ((arr[j].type === 'PAREN' && arr[j].value === '(') || (arr[j].type === 'BRACKET' && arr[j].value === '[')) d++;
+        else if ((arr[j].type === 'PAREN' && arr[j].value === ')') || (arr[j].type === 'BRACKET' && arr[j].value === ']')) d--;
+        else if (arr[j].type === type && d === 0) return j;
+      }
+      return -1;
+    };
+
+    // repita (at depth 0)
+    const repitaIdx = findD0(rest, 'REPITA', 0);
     if (repitaIdx !== -1) {
       const exprTokens = rest.slice(0, repitaIdx);
       const timesTokens = rest.slice(repitaIdx + 1).filter(t => t.type !== 'VEZES');
@@ -2415,12 +2690,12 @@ class Transpiler {
       return `(function(){ const __r=[]; for(let __i=0;__i<${times};__i++) __r.push(${expr}); return __r; })()`;
     }
 
-    // se/senao
-    const seIdx = rest.findIndex((t, j) => j >= 0 && t.type === 'SE');
+    // se/senao (at depth 0)
+    const seIdx = findD0(rest, 'SE', 0);
     if (seIdx !== -1) {
       const exprTokens = rest.slice(0, seIdx);
       const afterSe = rest.slice(seIdx + 1);
-      const senaoIdx = afterSe.findIndex(t => t.type === 'SENAO');
+      const senaoIdx = findD0(afterSe, 'SENAO', 0);
       const condTokens = senaoIdx !== -1 ? afterSe.slice(0, senaoIdx) : afterSe;
       const elseTokens = senaoIdx !== -1 ? afterSe.slice(senaoIdx + 1) : null;
       const expr = this.tokensToExpr(exprTokens);
@@ -2435,13 +2710,13 @@ class Transpiler {
 
   transpileDefineObject(node) {
     // Parse: chave: valor, chave: valor, ...
-    // Split by VIRGULA at root level (outside parens)
+    // Split by VIRGULA at root level (outside parens and brackets)
     const pairs = [];
     let current = [];
     let depth = 0;
     for (const t of node.valueTokens) {
-      if (t.type === 'PAREN' && t.value === '(') { depth++; current.push(t); }
-      else if (t.type === 'PAREN' && t.value === ')') { depth--; current.push(t); }
+      if ((t.type === 'PAREN' && t.value === '(') || (t.type === 'BRACKET' && t.value === '[')) { depth++; current.push(t); }
+      else if ((t.type === 'PAREN' && t.value === ')') || (t.type === 'BRACKET' && t.value === ']')) { depth--; current.push(t); }
       else if (t.type === 'VIRGULA' && depth === 0) {
         if (current.length > 0) pairs.push(current);
         current = [];
@@ -2457,8 +2732,8 @@ class Transpiler {
       let d = 0;
       for (let i = 0; i < pairTokens.length; i++) {
         const t = pairTokens[i];
-        if (t.type === 'PAREN' && t.value === '(') d++;
-        else if (t.type === 'PAREN' && t.value === ')') d--;
+        if ((t.type === 'PAREN' && t.value === '(') || (t.type === 'BRACKET' && t.value === '[')) d++;
+        else if ((t.type === 'PAREN' && t.value === ')') || (t.type === 'BRACKET' && t.value === ']')) d--;
         else if (t.type === 'DOIS_PONTOS' && d === 0) { colonIdx = i; break; }
       }
       if (colonIdx === -1) return null;
@@ -2467,11 +2742,11 @@ class Transpiler {
       const valTokens = pairTokens.slice(colonIdx + 1);
 
       const key = keyTokens.filter(t => t.type === 'IDENTIFIER' || t.type === 'NUMBER' || t.type === 'STRING')
-                           .map(t => t.value).join('').trim();
+                           .map(t => t.value).join(' ').trim();
       if (!key) return null;
 
       const val = this.tokensToExpr(valTokens);
-      return `${key}: ${val}`;
+      return `${JSON.stringify(key)}: ${val}`;
     }).filter(Boolean);
 
     return `let ${node.name} = { ${jsProps.join(', ')} };`;
@@ -2517,34 +2792,49 @@ class Transpiler {
   transpileAlterVar(node) {
     const val = this.tokensToExpr(node.valueTokens);
     const name = node.name;
-    const assign = `${name} = ${val};`;
-    // In interface mode, keep __state in sync after every assignment
     const stateSync = this._interfaceMode ? ` __state[${JSON.stringify(name)}] = ${name};` : '';
     const log = `${this._out}.push({ type: "execute", value: ${name} });`;
     const guardedWhile = (cond, body) =>
       `{ let __guard = 0; while (${cond}) { ${body} if (++__guard > 10000) { ${this._out}.push({ type: "execute", value: "⚠️ enquanto: limite de 10.000 iterações atingido" }); break; } } }`;
 
+    let assign = `${name} = ${val};${stateSync}`;
+    if (node.condTokens && node.condTokens.length > 0) {
+      const cond = this.tokensToExpr(node.condTokens);
+      if (node.elseTokens && node.elseTokens.length > 0) {
+        const elseVal = this.tokensToExpr(node.elseTokens);
+        assign = `if (${cond}) { ${name} = ${val};${stateSync} } else { ${name} = ${elseVal};${stateSync} }`;
+      } else {
+        assign = `if (${cond}) { ${name} = ${val};${stateSync} }`;
+      }
+    }
+
     const hasEnquanto = !!node.enquantoTokens;
     const hasRelatando = node.relatar;
     const hasN = !!node.relatandoN;
+    const hasRepita = !!(node.repitaTokens && node.repitaTokens.length > 0);
 
     if (hasEnquanto) {
       const cond = this.tokensToExpr(node.enquantoTokens);
-      const body = hasRelatando ? `${assign}${stateSync} ${log}` : `${assign}${stateSync}`;
+      const body = hasRelatando ? `${assign} ${log}` : assign;
       return guardedWhile(cond, body);
+    }
+
+    if (hasRepita) {
+      const times = this.tokensToExpr(node.repitaTokens);
+      const body = hasRelatando ? `${assign} ${log}` : assign;
+      return `for (let __r = 0; __r < ${times}; __r++) { ${body} }`;
     }
 
     if (hasN) {
       const n = this.tokensToExpr(node.relatandoN);
-      return `for (let __i = 0; __i < ${n}; __i++) { ${assign}${stateSync} ${log} }`;
+      return `for (let __i = 0; __i < ${n}; __i++) { ${assign} ${log} }`;
     }
 
     if (hasRelatando) {
-      return `${assign}${stateSync} ${log}`;
+      return `${assign} ${log}`;
     }
 
-    // plain altere
-    return `${assign}${stateSync}`;
+    return assign;
   }
 
   transpileDefineVar(node) {
@@ -2557,13 +2847,13 @@ class Transpiler {
   }
 
   transpileDefineArray(node) {
-    // Split valueTokens by root-level commas
+    // Split valueTokens by root-level commas (outside parens and brackets)
     const items = [];
     let current = [];
     let depth = 0;
     for (const t of node.valueTokens) {
-      if (t.type === 'PAREN' && t.value === '(') { depth++; current.push(t); }
-      else if (t.type === 'PAREN' && t.value === ')') { depth--; current.push(t); }
+      if ((t.type === 'PAREN' && t.value === '(') || (t.type === 'BRACKET' && t.value === '[')) { depth++; current.push(t); }
+      else if ((t.type === 'PAREN' && t.value === ')') || (t.type === 'BRACKET' && t.value === ']')) { depth--; current.push(t); }
       else if (t.type === 'VIRGULA' && depth === 0) {
         if (current.length > 0) items.push(current);
         current = [];
@@ -2629,10 +2919,14 @@ class Transpiler {
           bodyLines.push(`${name} = ${val};`);
         }
       } else if (first.type === 'DEFINA') {
-        // Inner variable
+        // Inner local variable — register in declaredVars for subsequent body statements
         if (stmtTokens.length >= 4 && stmtTokens[2].type === 'COMO') {
           const name = stmtTokens[1].value;
           const val = this.tokensToExpr(stmtTokens.slice(3));
+          if (!this.declaredVars.has(name)) {
+            this.declaredVars.add(name);
+            addedParams.push(name);
+          }
           bodyLines.push(`let ${name} = ${val};`);
         }
       } else if (first.type === 'APRESENTE') {
@@ -2656,7 +2950,7 @@ class Transpiler {
       }
     }
 
-    // Remove params from declaredVars (they're local to the function)
+    // Remove params & local defs from declaredVars
     for (const p of addedParams) {
       this.declaredVars.delete(p);
     }
@@ -2666,6 +2960,16 @@ class Transpiler {
 
   // Handles all forms of `execute` inside function bodies (returns value or loop)
   transpileFuncBodyExecute(rest) {
+    const findD0 = (arr, type, start = 0) => {
+      let d = 0;
+      for (let j = start; j < arr.length; j++) {
+        if ((arr[j].type === 'PAREN' && arr[j].value === '(') || (arr[j].type === 'BRACKET' && arr[j].value === '[')) d++;
+        else if ((arr[j].type === 'PAREN' && arr[j].value === ')') || (arr[j].type === 'BRACKET' && arr[j].value === ']')) d--;
+        else if (arr[j].type === type && d === 0) return j;
+      }
+      return -1;
+    };
+
     // Math operations
     if (rest[0]?.type === 'POTENCIA_DE') {
       const node = { op: 'potencia', argTokens: rest.slice(1) };
@@ -2676,8 +2980,7 @@ class Transpiler {
       return `return ${this.transpileExecuteMathExpr(node)};`;
     }
     if (rest[0]?.type === 'ALEATORIO_ENTRE') {
-      // May also have repita
-      const repitaIdx = rest.findIndex(t => t.type === 'REPITA');
+      const repitaIdx = findD0(rest, 'REPITA', 1);
       if (repitaIdx !== -1) {
         const coreRest = rest.slice(0, repitaIdx);
         const afterRepita = rest.slice(repitaIdx + 1);
@@ -2687,7 +2990,7 @@ class Transpiler {
         const eIdx = argTokens.findIndex(t => t.type === 'E_CONJ');
         const node = { op: 'aleatorio', argTokens, eIdx };
         const mathExpr = this.transpileExecuteMathExpr(node);
-        return `(function(){ const __r=[]; for(let __i=0;__i<${times};__i++) __r.push(${mathExpr}); return __r; })()`;
+        return `return (function(){ const __r=[]; for(let __i=0;__i<${times};__i++) __r.push(${mathExpr}); return __r; })();`;
       }
       const argTokens = rest.slice(1);
       const eIdx = argTokens.findIndex(t => t.type === 'E_CONJ');
@@ -2695,24 +2998,23 @@ class Transpiler {
       return `return ${this.transpileExecuteMathExpr(node)};`;
     }
 
-    // Find repita
-    const repitaIdx = rest.findIndex(t => t.type === 'REPITA');
+    // Find repita at depth 0
+    const repitaIdx = findD0(rest, 'REPITA', 0);
     if (repitaIdx !== -1) {
       const exprTokens = rest.slice(0, repitaIdx);
       const afterRepita = rest.slice(repitaIdx + 1);
       const timesTokens = afterRepita.filter(t => t.type !== 'VEZES');
       const expr = this.tokensToExpr(exprTokens);
       const times = this.tokensToExpr(timesTokens);
-      // Return array of repeated results
       return `return (function(){ const __r=[]; for(let __i=0;__i<${times};__i++) __r.push(${expr}); return __r; })();`;
     }
 
-    // Find se/senao
-    const seIdx = rest.findIndex(t => t.type === 'SE');
+    // Find se/senao at depth 0
+    const seIdx = findD0(rest, 'SE', 0);
     if (seIdx !== -1) {
       const exprTokens = rest.slice(0, seIdx);
       const afterSe = rest.slice(seIdx + 1);
-      const senaoIdx = afterSe.findIndex(t => t.type === 'SENAO');
+      const senaoIdx = findD0(afterSe, 'SENAO', 0);
       const condTokens = senaoIdx !== -1 ? afterSe.slice(0, senaoIdx) : afterSe;
       const elseTokens = senaoIdx !== -1 ? afterSe.slice(senaoIdx + 1) : null;
       const expr = this.tokensToExpr(exprTokens);
@@ -2776,9 +3078,11 @@ class Transpiler {
   transpileExecuteMathExpr(node) {
     if (node.op === 'potencia') {
       const args = [];
-      let current = [];
+      let current = [], depth = 0;
       for (const t of node.argTokens) {
-        if (t.type === 'VIRGULA') {
+        if ((t.type === 'PAREN' && t.value === '(') || (t.type === 'BRACKET' && t.value === '[')) { depth++; current.push(t); }
+        else if ((t.type === 'PAREN' && t.value === ')') || (t.type === 'BRACKET' && t.value === ']')) { depth--; current.push(t); }
+        else if (t.type === 'VIRGULA' && depth === 0) {
           args.push(this.tokensToExpr(current));
           current = [];
         } else {
@@ -2802,7 +3106,7 @@ class Transpiler {
       }
       const min = this.tokensToExpr(minTokens);
       const max = this.tokensToExpr(maxTokens);
-      return `(Math.floor(Math.random() * (${max} - ${min} + 1)) + ${min})`;
+      return `(Math.floor(Math.random() * ((${max}) - (${min}) + 1)) + (${min}))`;
     }
     if (node.op === 'juros_compostos') {
       const taxa = this.tokensToExpr(node.taxaTokens);
@@ -2844,24 +3148,33 @@ class Transpiler {
   }
 
   transpileExecuteLoop(node) {
-    // for (let i = INIT; COND; i = INCR) { BODY }
-    // 'i' is injected implicitly — cond and incr tokens can reference it directly
+    // Supports BOTH:
+    //   execute loop(1, i <= 5, i + 1) ...
+    //   execute loop(i = 1, i <= 5, i = i + 1) ...
+    let varName = 'i';
+    let initTokens = node.initTokens || [];
+    if (initTokens.length >= 3 && initTokens[0].type === 'IDENTIFIER' && initTokens[1].type === 'OPERATOR' && initTokens[1].value === '=') {
+      varName = initTokens[0].value;
+      initTokens = initTokens.slice(2);
+    }
 
-    const init = this.tokensToExpr(node.initTokens);
-
-    // Inject 'i' into declaredVars so body and cond/incr resolve it as a variable
-    const iWasDeclared = this.declaredVars.has('i');
-    this.declaredVars.add('i');
+    const init = this.tokensToExpr(initTokens);
+    const wasDeclared = this.declaredVars.has(varName);
+    this.declaredVars.add(varName);
 
     const cond = this.tokensToExpr(node.condTokens);
-    const incr = this.tokensToExpr(node.incrTokens);
 
-    // Transpile body using same sub-statement logic as funcao body
+    let incrTokens = node.incrTokens || [];
+    if (incrTokens.length >= 3 && incrTokens[0].type === 'IDENTIFIER' && incrTokens[1].type === 'OPERATOR' && incrTokens[1].value === '=') {
+      incrTokens = incrTokens.slice(2);
+    }
+    const incr = this.tokensToExpr(incrTokens);
+
     const bodyLines = this.transpileLoopBody(node.bodyTokens);
+    if (!wasDeclared) this.declaredVars.delete(varName);
 
-    if (!iWasDeclared) this.declaredVars.delete('i');
-
-    return `{ for (let i = ${init}; ${cond}; i = ${incr}) { ${bodyLines} } }`;
+    const initDecl = wasDeclared ? `${varName} = ${init}` : `let ${varName} = ${init}`;
+    return `{ let __lguard = 0; for (${initDecl}; ${cond}; ${varName} = ${incr}) { ${bodyLines} if (++__lguard > 50000) break; } }`;
   }
 
   transpileLoopBody(bodyTokens) {
@@ -2884,10 +3197,11 @@ class Transpiler {
     if (current.length > 0) subStatements.push(current);
 
     const lines = [];
+    const addedLocals = [];
     for (const stmtTokens of subStatements) {
       const first = stmtTokens[0];
       if (first.type === 'EXECUTE') {
-        lines.push(this.transpileFuncBodyExecute(stmtTokens.slice(1)));
+        lines.push(this.transpileLoopBodyExecute(stmtTokens.slice(1)));
       } else if (first.type === 'ALTERE') {
         if (stmtTokens.length >= 4 && stmtTokens[2].type === 'PARA') {
           const name = stmtTokens[1].value;
@@ -2905,7 +3219,10 @@ class Transpiler {
         if (stmtTokens.length >= 4 && stmtTokens[2].type === 'COMO') {
           const name = stmtTokens[1].value;
           const val = this.tokensToExpr(stmtTokens.slice(3));
-          this.declaredVars.add(name);
+          if (!this.declaredVars.has(name)) {
+            this.declaredVars.add(name);
+            addedLocals.push(name);
+          }
           lines.push(`let ${name} = ${val};`);
         }
       } else if (first.type === 'APRESENTE') {
@@ -2922,7 +3239,48 @@ class Transpiler {
         lines.push(`${this._out}.push({ type: "${format}", value: ${this.tokensToExpr(exprT)} });`);
       }
     }
+    for (const loc of addedLocals) this.declaredVars.delete(loc);
     return lines.join(' ');
+  }
+
+  // Handles `execute` inside `execute loop(...)` without emitting `return`
+  transpileLoopBodyExecute(rest) {
+    const findD0 = (arr, type, start = 0) => {
+      let d = 0;
+      for (let j = start; j < arr.length; j++) {
+        if ((arr[j].type === 'PAREN' && arr[j].value === '(') || (arr[j].type === 'BRACKET' && arr[j].value === '[')) d++;
+        else if ((arr[j].type === 'PAREN' && arr[j].value === ')') || (arr[j].type === 'BRACKET' && arr[j].value === ']')) d--;
+        else if (arr[j].type === type && d === 0) return j;
+      }
+      return -1;
+    };
+    if (rest[0]?.type === 'POTENCIA_DE') {
+      return `${this._out}.push({ type: "execute", value: ${this.transpileExecuteMathExpr({ op: 'potencia', argTokens: rest.slice(1) })} });`;
+    }
+    if (rest[0]?.type === 'RAIZ_DE') {
+      return `${this._out}.push({ type: "execute", value: ${this.transpileExecuteMathExpr({ op: 'raiz', argTokens: rest.slice(1) })} });`;
+    }
+    if (rest[0]?.type === 'ALEATORIO_ENTRE') {
+      const argTokens = rest.slice(1);
+      const eIdx = argTokens.findIndex(t => t.type === 'E_CONJ');
+      return `${this._out}.push({ type: "execute", value: ${this.transpileExecuteMathExpr({ op: 'aleatorio', argTokens, eIdx })} });`;
+    }
+    const seIdx = findD0(rest, 'SE', 0);
+    if (seIdx !== -1) {
+      const exprTokens = rest.slice(0, seIdx);
+      const afterSe = rest.slice(seIdx + 1);
+      const senaoIdx = findD0(afterSe, 'SENAO', 0);
+      const condTokens = senaoIdx !== -1 ? afterSe.slice(0, senaoIdx) : afterSe;
+      const elseTokens = senaoIdx !== -1 ? afterSe.slice(senaoIdx + 1) : null;
+      const expr = this.tokensToExpr(exprTokens);
+      const cond = this.tokensToExpr(condTokens);
+      if (elseTokens && elseTokens.length > 0) {
+        const elseExpr = this.tokensToExpr(elseTokens);
+        return `if (${cond}) { ${this._out}.push({ type: "execute", value: ${expr} }); } else { ${this._out}.push({ type: "execute", value: ${elseExpr} }); }`;
+      }
+      return `if (${cond}) { ${this._out}.push({ type: "execute", value: ${expr} }); }`;
+    }
+    return `${this._out}.push({ type: "execute", value: ${this.tokensToExpr(rest)} });`;
   }
 
   transpileExecuteMath(node) {
@@ -2930,20 +3288,32 @@ class Transpiler {
     return `${this._out}.push({ type: "execute", value: ${mathExpr} });`;
   }
 
-  // ==================== interface cor de fundo ====================
+  // ==================== interface cor de fundo / cor de texto ====================
   transpileExecuteCorDeFundo(node) {
+    if (node.condTokens) {
+      const cond = this.tokensToExpr(node.condTokens);
+      if (node.elseRgb) {
+        return `if (${cond}) { __iface_output.push({ type: 'corDeFundo', r: ${node.r}, g: ${node.g}, b: ${node.b} }); } else { __iface_output.push({ type: 'corDeFundo', r: ${node.elseRgb.r}, g: ${node.elseRgb.g}, b: ${node.elseRgb.b} }); }`;
+      }
+      return `if (${cond}) { __iface_output.push({ type: 'corDeFundo', r: ${node.r}, g: ${node.g}, b: ${node.b} }); }`;
+    }
     return `__iface_output.push({ type: 'corDeFundo', r: ${node.r}, g: ${node.g}, b: ${node.b} });`;
+  }
+
+  transpileExecuteCorDeTexto(node) {
+    return `__iface_output.push({ type: 'corDeTexto', r: ${node.r}, g: ${node.g}, b: ${node.b} });`;
   }
 
   // ==================== sprites ====================
   transpileDefineSpriteReto(node) {
-    // Register the sprite definition in __sprites at runtime
     const points = JSON.stringify(node.points);
-    return `if (!window.parent.__ccSprites) window.parent.__ccSprites = {};\nwindow.parent.__ccSprites[${JSON.stringify(node.name)}] = { kind: 'reto', points: ${points} };\nvar ${node.name} = ${JSON.stringify(node.name)};`;
+    const color = JSON.stringify(node.color || null);
+    return `if (!window.parent.__ccSprites) window.parent.__ccSprites = {};\nwindow.parent.__ccSprites[${JSON.stringify(node.name)}] = { kind: 'reto', points: ${points}, color: ${color} };\nvar ${node.name} = ${JSON.stringify(node.name)};`;
   }
 
   transpileDefineSpriteCircle(node) {
-    return `if (!window.parent.__ccSprites) window.parent.__ccSprites = {};\nwindow.parent.__ccSprites[${JSON.stringify(node.name)}] = { kind: 'curvo', radius: ${node.radius} };\nvar ${node.name} = ${JSON.stringify(node.name)};`;
+    const color = JSON.stringify(node.color || null);
+    return `if (!window.parent.__ccSprites) window.parent.__ccSprites = {};\nwindow.parent.__ccSprites[${JSON.stringify(node.name)}] = { kind: 'curvo', radius: ${node.radius}, color: ${color} };\nvar ${node.name} = ${JSON.stringify(node.name)};`;
   }
 
   transpileDefineSpriteImage(node) {
@@ -2951,22 +3321,60 @@ class Transpiler {
   }
 
   transpileDefineInteractive(node) {
-    // Register in __ccElements on parent window (persistent across re-runs)
+    // Register in __ccElements on parent window while PRESERVING .valor across re-runs
     const key = JSON.stringify(node.name);
     const labelStr = JSON.stringify(node.label);
     const extraStr = JSON.stringify(node.extraArgs);
-    let effectCode = '';
-    if (node.effectTokens && node.effectTokens.length > 0) {
-      // Transpile effect tokens as an inline execute
-      const effectExpr = this.tokensToExpr(node.effectTokens);
-      effectCode = `${this._out}.push({ type: 'execute', value: (${effectExpr}) });`;
-    }
-    return [
+
+    let defaultVal = '""';
+    if (node.kind === 'toggle') defaultVal = 'false';
+    else if (node.kind === 'slider') defaultVal = String(Number(node.extraArgs[0] ?? 0));
+    else if (node.kind === 'seletor') defaultVal = JSON.stringify(node.extraArgs[0] ?? '');
+
+    const lines = [
       `if (!window.parent.__ccElements) window.parent.__ccElements = {};`,
-      `window.parent.__ccElements[${key}] = { kind: ${JSON.stringify(node.kind)}, label: ${labelStr}, extra: ${extraStr} };`,
+      `var __prev_${node.name} = window.parent.__ccElements[${key}];`,
+      `window.parent.__ccElements[${key}] = { _key: ${key}, kind: ${JSON.stringify(node.kind)}, label: ${labelStr}, extra: ${extraStr}, valor: (__prev_${node.name} && __prev_${node.name}.valor !== undefined) ? __prev_${node.name}.valor : ${defaultVal} };`,
       `var ${node.name} = window.parent.__ccElements[${key}];`,
-      `if (${node.name}.valor === undefined) ${node.name}.valor = '';`,
-    ].join('\n');
+    ];
+
+    // If this is a botao with effect tokens, execute the effect when this button was clicked
+    if (node.kind === 'botao' && node.effectTokens && node.effectTokens.length > 0) {
+      const eff = node.effectTokens;
+      let actionJs = '';
+      if (eff[0].type === 'ALTERE' && eff.length >= 4 && eff[2].type === 'PARA') {
+        const targetVar = eff[1].value;
+        const rest = eff.slice(3);
+        const seIdx = rest.findIndex(t => t.type === 'SE');
+        if (seIdx > 0) {
+          const valExpr = this.tokensToExpr(rest.slice(0, seIdx));
+          const afterSe = rest.slice(seIdx + 1);
+          const senaoIdx = afterSe.findIndex(t => t.type === 'SENAO');
+          if (senaoIdx > 0) {
+            const condExpr = this.tokensToExpr(afterSe.slice(0, senaoIdx));
+            const elseExpr = this.tokensToExpr(afterSe.slice(senaoIdx + 1));
+            actionJs = `${targetVar} = (${condExpr}) ? (${valExpr}) : (${elseExpr}); __state[${JSON.stringify(targetVar)}] = ${targetVar}; ${node.name}.valor = ${targetVar};`;
+          } else {
+            const condExpr = this.tokensToExpr(afterSe);
+            actionJs = `if (${condExpr}) { ${targetVar} = (${valExpr}); __state[${JSON.stringify(targetVar)}] = ${targetVar}; ${node.name}.valor = ${targetVar}; }`;
+          }
+        } else {
+          const valExpr = this.tokensToExpr(rest);
+          actionJs = `${targetVar} = (${valExpr}); __state[${JSON.stringify(targetVar)}] = ${targetVar}; ${node.name}.valor = ${targetVar};`;
+        }
+      } else if (eff[0].type === 'EXECUTE') {
+        const effExpr = this.transpileRodarExec(eff.slice(1));
+        actionJs = `${node.name}.valor = (${effExpr});`;
+      } else {
+        const effExpr = this.tokensToExpr(eff);
+        actionJs = `${node.name}.valor = (${effExpr});`;
+      }
+      lines.push(
+        `if (window.parent.__ccLastEvent && window.parent.__ccLastEvent.eventType === 'click' && window.parent.__ccLastEvent.key === ${key}) { ${actionJs} window.parent.__ccLastEvent = null; }`
+      );
+    }
+
+    return lines.join('\n');
   }
 
   // ==================== salve/carregue local ====================
@@ -2978,8 +3386,9 @@ class Transpiler {
   }
 
   transpileCarregueLocal(node) {
+    const sync = this._interfaceMode ? (v) => ` __state[${JSON.stringify(v)}] = ${v};` : () => '';
     const lines = node.vars.map(v =>
-      `try { var __s_${v} = localStorage.getItem('__cc_${v}'); if (__s_${v} !== null) ${v} = JSON.parse(__s_${v}); } catch(__e) {}`
+      `try { var __s_${v} = localStorage.getItem('__cc_${v}'); if (__s_${v} !== null) { ${v} = JSON.parse(__s_${v});${sync(v)} } } catch(__e) {}`
     );
     return lines.join('\n');
   }
@@ -2988,11 +3397,11 @@ class Transpiler {
   transpileSalveNuvem(node) {
     const keyExpr = node.usingKey
       ? JSON.stringify(node.usingKey)
-      : `__cloudKey`;
+      : `(typeof localStorage !== 'undefined' && localStorage.getItem('crabcode_cloud_key')) || 'crabcode-default'`;
     const bodyObj = '{' + node.vars.map(v => `"${v}": ${v}`).join(', ') + '}';
-    return `(async function(){
+    return `await (async function(){
   try {
-    const __ck = ${keyExpr};
+    const __ck = encodeURIComponent(${keyExpr});
     await fetch('${CRABCODE_CLOUD_URL}' + '/save/' + __ck, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -3005,13 +3414,14 @@ class Transpiler {
   transpileCarregueNuvem(node) {
     const keyExpr = node.usingKey
       ? JSON.stringify(node.usingKey)
-      : `__cloudKey`;
+      : `(typeof localStorage !== 'undefined' && localStorage.getItem('crabcode_cloud_key')) || 'crabcode-default'`;
+    const sync = this._interfaceMode ? (v) => ` __state[${JSON.stringify(v)}] = ${v};` : () => '';
     const assignLines = node.vars.map(v =>
-      `if (__d["${v}"] !== undefined) ${v} = __d["${v}"];`
+      `if (__d && __d["${v}"] !== undefined) { ${v} = __d["${v}"];${sync(v)} }`
     ).join(' ');
     return `await (async function(){
   try {
-    const __ck = ${keyExpr};
+    const __ck = encodeURIComponent(${keyExpr});
     const __r = await fetch('${CRABCODE_CLOUD_URL}' + '/load/' + __ck);
     const __d = await __r.json();
     ${assignLines}
@@ -3028,7 +3438,7 @@ class Transpiler {
       return `${out}.push({ type: 'sprite', spriteKey: ${expr}${yellowPart} });`;
     }
     if (['botao', 'toggle', 'slider', 'seletor', 'digite', 'pergunte'].includes(format) && this._interfaceMode) {
-      return `${out}.push({ type: ${JSON.stringify(format)}, elemKey: ${expr}${yellowPart} });`;
+      return `${out}.push({ type: ${JSON.stringify(format)}, elemKey: ((${expr}) && typeof (${expr}) === 'object' && (${expr})._key) ? (${expr})._key : (${expr})${yellowPart} });`;
     }
     if (format === 'tabela' || format === 'grafico') {
       const xName = JSON.stringify(node.xName || 'x');
@@ -3097,17 +3507,21 @@ class Transpiler {
 class Runtime {
   constructor() {
     this._sandboxReady = false;
+    this._readyPromise = null;
+    this._readyResolve = null;
     this._iframe = null;
+    this._pendingId = null;
     this._pendingResolve = null;
     this._pendingReject = null;
     this._timeout = null;
+    this._messageHandler = null;
     this._initSandbox();
   }
 
   _initSandbox() {
-    // Create a hidden sandboxed iframe.
-    // allow-same-origin is required for localStorage (salve/carregue local) and
-    // fetch (salve/carregue nuvem). Security tradeoff: documented in README.
+    this._sandboxReady = false;
+    this._readyPromise = new Promise(resolve => { this._readyResolve = resolve; });
+
     this._iframe = document.createElement('iframe');
     this._iframe.sandbox = 'allow-scripts allow-same-origin';
     this._iframe.style.cssText = 'display:none;width:0;height:0;border:none;position:absolute;';
@@ -3116,7 +3530,6 @@ class Runtime {
         try {
           var code = e.data && e.data.code;
           if (typeof code !== 'string') return;
-          // Wrap in async function to support await (used by carregue/salve nuvem)
           var asyncFn = new Function('return (async function() {\\n' + code + '\\n})()');
           var result = asyncFn();
           if (result && typeof result.then === 'function') {
@@ -3135,16 +3548,23 @@ class Runtime {
       parent.postMessage({ type: 'sandbox-ready' }, '*');
     <\/script></head><body></body></html>`;
 
-    // Listen for messages from the sandbox
+    if (this._messageHandler) {
+      window.removeEventListener('message', this._messageHandler);
+    }
     this._messageHandler = (e) => {
       if (!e.data) return;
       if (e.data.type === 'sandbox-ready') {
         this._sandboxReady = true;
+        if (this._readyResolve) {
+          this._readyResolve();
+          this._readyResolve = null;
+        }
         return;
       }
-      if (e.data.id !== undefined && this._pendingResolve) {
+      if (e.data.id !== undefined && e.data.id === this._pendingId && this._pendingResolve) {
         clearTimeout(this._timeout);
         const resolve = this._pendingResolve;
+        this._pendingId = null;
         this._pendingResolve = null;
         this._pendingReject = null;
         resolve({ output: e.data.output || [], error: e.data.error || null });
@@ -3154,14 +3574,33 @@ class Runtime {
     document.body.appendChild(this._iframe);
   }
 
-  runInSandbox(jsCode, timeoutMs = 10000) {
+  async runInSandbox(jsCode, timeoutMs = 10000) {
+    // Wait briefly for iframe readiness on very first run
+    if (!this._sandboxReady && this._readyPromise) {
+      await Promise.race([
+        this._readyPromise,
+        new Promise(r => setTimeout(r, 1500))
+      ]);
+    }
+
+    // Cancel any previously pending run cleanly
+    if (this._pendingResolve) {
+      clearTimeout(this._timeout);
+      const prevResolve = this._pendingResolve;
+      this._pendingId = null;
+      this._pendingResolve = null;
+      this._pendingReject = null;
+      prevResolve({ output: [], error: null, superseded: true });
+    }
+
     return new Promise((resolve, reject) => {
       const id = Date.now() + Math.random();
+      this._pendingId = id;
       this._pendingResolve = resolve;
       this._pendingReject = reject;
 
       this._timeout = setTimeout(() => {
-        // Timeout — destroy and recreate iframe
+        this._pendingId = null;
         this._pendingResolve = null;
         this._pendingReject = null;
         this._resetSandbox();
@@ -3172,9 +3611,9 @@ class Runtime {
         this._iframe.contentWindow.postMessage({ id: id, code: jsCode }, '*');
       } catch (e) {
         clearTimeout(this._timeout);
+        this._pendingId = null;
         this._pendingResolve = null;
         this._pendingReject = null;
-        // Fallback to direct execution
         resolve(this._runDirect(jsCode));
       }
     });
@@ -3189,12 +3628,10 @@ class Runtime {
   }
 
   _runDirect(jsCode) {
-    // Fallback — direct async execution (used if sandbox unavailable)
     try {
       const fn = new Function('return (async function() {\n' + jsCode + '\n})()');
       const result = fn();
       if (result && typeof result.then === 'function') {
-        // Return synchronous empty output — async fallback can't wait
         return { output: [], error: null };
       }
       return { output: result || [], error: null };
@@ -3203,7 +3640,6 @@ class Runtime {
     }
   }
 
-  // Legacy synchronous API (fallback)
   run(jsCode) {
     return this._runDirect(jsCode);
   }
@@ -3899,7 +4335,7 @@ function segregacao_independente(n) { return Math.pow(2, n); }`,
       key: 'bio_ecologia',
       title: '🌿 Ecologia',
       description: 'Capacidade de suporte, índice de diversidade de Shannon, cadeias tróficas, crescimento populacional e índice de nicho.',
-      exports: ['crescimento_logistico','capacidade_suporte','shannon_diversidade','eficiencia_trófica','biomassa_nivel','taxa_extincao','indice_niche','abundancia_relativa','taxa_predacao','mortalidade_populacional'],
+      exports: ['crescimento_logistico','capacidade_suporte','shannon_diversidade','eficiencia_trofica','biomassa_nivel','taxa_extincao','indice_niche','abundancia_relativa','taxa_predacao','mortalidade_populacional'],
       functions: [
         { name: 'crescimento_logistico', params: 'n, r, k', desc: 'dN/dt = rN(1 - N/K)' },
         { name: 'capacidade_suporte', params: 'recursos, consumo_ind', desc: 'K = recursos / consumo por indivíduo' },
@@ -3930,7 +4366,7 @@ function mortalidade_populacional(mortos, total) { return mortos / total; }`,
       key: 'bio_microbiologia',
       title: '🦠 Microbiologia',
       description: 'Crescimento bacteriano, tempo de geração, curva de crescimento, dose infectante e eficácia de desinfecção.',
-      exports: ['crescimento_bacteriano','tempo_geracao','populacao_fase_log','taxa_crescimento_especifico','reducao_decimal','dose_infectante_50','eficacia_antimicrobiano','numero_gerações','densidade_optica_estimada','unidades_formadoras_colonia'],
+      exports: ['crescimento_bacteriano','tempo_geracao','populacao_fase_log','taxa_crescimento_especifico','reducao_decimal','dose_infectante_50','eficacia_antimicrobiano','numero_geracoes','densidade_optica_estimada','unidades_formadoras_colonia'],
       functions: [
         { name: 'crescimento_bacteriano', params: 'n0, mu, t', desc: 'N = N0 × e^(μt)' },
         { name: 'tempo_geracao', params: 'mu', desc: 'g = ln(2) / μ' },
@@ -4804,7 +5240,7 @@ function serie_taylor_cosseno(x, termos) { var s = 0; for (var n = 0; n < termos
 function metodo_newton(f, df, x0, iter) { var x = x0; for (var i = 0; i < (iter || 100); i++) { var fx = f(x); var dfx = df(x); if (Math.abs(dfx) < 1e-15) break; x = x - fx / dfx; } return x; }
 function trapezio(f, a, b, n) { n = n || 1000; var h = (b - a) / n; var s = (f(a) + f(b)) / 2; for (var i = 1; i < n; i++) s += f(a + i * h); return s * h; }
 function simpson(f, a, b, n) { n = n || 1000; if (n % 2 !== 0) n++; var h = (b - a) / n; var s = f(a) + f(b); for (var i = 1; i < n; i += 2) s += 4 * f(a + i * h); for (var i = 2; i < n; i += 2) s += 2 * f(a + i * h); return (s * h) / 3; }`,
-      example: `importe calculo\n\n# Derivada de x² no ponto x=3\nexecute derivada(funcao(x) retorne x*x fim, 3, 0.001)\n\n# Integral de x² de 0 a 1\nexecute simpson(funcao(x) retorne x*x fim, 0, 1, 100)\n\nexecute serie_taylor_exp(1, 20)\napresente serie_taylor_seno(3.14159/6, 10) em destaque`,
+      example: `importe calculo\n\n# Derivada e integral de x²\ndefina quadrado como funcao(x) execute x * x\nexecute derivada(quadrado, 3, 0.001)\nexecute simpson(quadrado, 0, 1, 100)\nexecute serie_taylor_exp(1, 20)\napresente serie_taylor_seno(3.14159 / 6, 10) em destaque`,
     },
 
     // ── estatistica_descritiva ───────────────────────────────
@@ -5719,7 +6155,7 @@ function drawdown_maximo(pico,vale){return(pico-vale)/pico;}`,
       exports: [],
       functions: [],
       jsCode: '',
-      example: `importe biblioteca_ciencias\n\nexecute velocidade(100, 10)\nexecute ph(0.001)\nexecute imc_bio(78, 1.75)\nexecute velocidade_luz()\nexecute lei_ohm(220, 100)\nexecute seno(30)`,
+      example: `importe biblioteca_ciencias\n\nexecute velocidade(100, 10)\nexecute ph(0.001)\nexecute imc_bio(78, 1.75)\nexecute velocidade_luz()\nexecute lei_ohm(220, 100)\nexecute norma_vetor(3, 4)`,
       dependencies: ['formulas_fisica', 'formulas_quimica', 'formulas_biologia', 'astronomia', 'formulas_eletrica', 'algebra_linear', 'eletroquimica', 'bioquimica'],
     },
 
@@ -5758,7 +6194,7 @@ function drawdown_maximo(pico,vale){return(pico-vale)/pico;}`,
       exports: [],
       functions: [],
       jsCode: '',
-      example: `importe biblioteca_financeira_completa\n\nexecute juros_compostos(1000, 0.01, 12)\nexecute roi_investimento(15000, 10000)\nexecute pib_per_capita(2000000, 200000)\nexecute aliquota_irpf(4500)\napresente roe(120000, 400000) em destaque`,
+      example: `importe biblioteca_financeira_completa\n\nexecute juros_compostos(1000, 0.01, 12)\nexecute rentabilidade(15000, 10000)\nexecute pib_per_capita(2000000, 200000)\nexecute irrf(4500)\napresente roe(120000, 400000) em destaque`,
       dependencies: ['formulas_financas', 'investimentos', 'formulas_economia', 'financas_br', 'formulas_contabilidade', 'marketing_digital', 'logistica', 'matematica_financeira_avancada'],
     },
   },
@@ -5767,6 +6203,44 @@ function drawdown_maximo(pico,vale){return(pico-vale)/pico;}`,
     if (this.official[name]) return this.official[name];
     const custom = this.getCustomLibs();
     return custom[name] || null;
+  },
+
+  getResolvedExports(name, visited = new Set()) {
+    if (visited.has(name)) return [];
+    visited.add(name);
+    const lib = this.get(name);
+    if (!lib) return [];
+    const out = new Set(lib.exports || []);
+    if (lib.dependencies) {
+      for (const dep of lib.dependencies) {
+        for (const e of this.getResolvedExports(dep, visited)) out.add(e);
+      }
+    }
+    return Array.from(out);
+  },
+
+  getResolvedFunctions(name, visited = new Set()) {
+    if (visited.has(name)) return [];
+    visited.add(name);
+    const lib = this.get(name);
+    if (!lib) return [];
+    const out = [];
+    const seen = new Set();
+    const pushFns = (fns) => {
+      for (const fn of (fns || [])) {
+        if (!seen.has(fn.name)) {
+          seen.add(fn.name);
+          out.push(fn);
+        }
+      }
+    };
+    pushFns(lib.functions);
+    if (lib.dependencies) {
+      for (const dep of lib.dependencies) {
+        pushFns(this.getResolvedFunctions(dep, visited));
+      }
+    }
+    return out;
   },
 
   getAll() {
@@ -5819,5 +6293,6 @@ function drawdown_maximo(pico,vale){return(pico-vale)/pico;}`,
   }
 };
 
+applyExtraLibsAndRanking(CrabLibRegistry);
 
 export { TokenDef, Lexer, Parser, Transpiler, Runtime, CrabLibRegistry };
