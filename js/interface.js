@@ -8,6 +8,8 @@ class InterfaceRenderer {
     this._container = container;
     this._itemCount = 0;
     this._spriteTimers = [];
+    this._draggingSlider = null; // { key, el } preserved during live slider drag
+    this._digiteTimer = null;
   }
 
   _clearSpriteTimers() {
@@ -17,6 +19,24 @@ class InterfaceRenderer {
 
   render(outputItems, bgColor = null) {
     this._clearSpriteTimers();
+
+    // Capture focus & caret state inside interface canvas before rebuild
+    let focusSnap = null;
+    const activeEl = document.activeElement;
+    if (activeEl && this._container.contains(activeEl) && activeEl.dataset?.ccKey) {
+      focusSnap = {
+        key: activeEl.dataset.ccKey,
+        tag: activeEl.tagName,
+        start: typeof activeEl.selectionStart === 'number' ? activeEl.selectionStart : null,
+        end: typeof activeEl.selectionEnd === 'number' ? activeEl.selectionEnd : null,
+      };
+    }
+
+    // Detach actively dragged slider so browser pointer capture is never interrupted
+    if (this._draggingSlider?.el && this._draggingSlider.el.parentNode) {
+      this._draggingSlider.el.parentNode.removeChild(this._draggingSlider.el);
+    }
+
     this._container.innerHTML = '';
     this._itemCount = 0;
 
@@ -36,6 +56,17 @@ class InterfaceRenderer {
 
     for (const item of outputItems) {
       this._renderItem(item);
+    }
+
+    // Restore focus & caret seamlessly for non-dragged interactive controls
+    if (focusSnap && (!this._draggingSlider || this._draggingSlider.key !== focusSnap.key)) {
+      const target = this._container.querySelector(`[data-cc-key="${CSS.escape(focusSnap.key)}"]`);
+      if (target && typeof target.focus === 'function') {
+        target.focus({ preventScroll: true });
+        if (focusSnap.start !== null && typeof target.setSelectionRange === 'function') {
+          try { target.setSelectionRange(focusSnap.start, focusSnap.end ?? focusSnap.start); } catch { /* ignore */ }
+        }
+      }
     }
 
     this._setupKeyboard();
@@ -103,6 +134,16 @@ class InterfaceRenderer {
       case 'apresentacao':
         this._renderBlock(item, 'iface-apresentacao');
         break;
+      case 'cientifica': {
+        const num = Number(item.value);
+        const formatted = Number.isFinite(num) ? num.toExponential(4) : String(item.value ?? '');
+        this._renderBlock({ ...item, value: formatted }, 'iface-execute');
+        break;
+      }
+      case 'dados':
+      case 'tabela':
+        this._renderDataTable(item);
+        break;
       case 'sprite':
         this._renderSprite(item);
         break;
@@ -118,6 +159,24 @@ class InterfaceRenderer {
         this._renderBlock(item, 'iface-item');
         break;
     }
+  }
+
+  _renderDataTable(item) {
+    const val = item.value;
+    if (!val || typeof val !== 'object') {
+      this._renderBlock(item, 'iface-execute');
+      return;
+    }
+    const el = document.createElement('div');
+    el.className = 'iface-block iface-table-wrap';
+    const entries = Array.isArray(val)
+      ? val.map((v, i) => [String(i + 1), v])
+      : Object.entries(val);
+    const rows = entries.map(([k, v]) =>
+      `<tr><th>${this._sanitizeHTML(k)}</th><td>${this._sanitizeHTML(v)}</td></tr>`
+    ).join('');
+    el.innerHTML = `<table class="iface-table"><tbody>${rows}</tbody></table>`;
+    this._mountElement(el, item.yellow);
   }
 
   _mountElement(el, yellow) {
@@ -247,6 +306,22 @@ class InterfaceRenderer {
     if (yellow.grid) {
       this._applyGrid(el, yellow.grid);
       this._container.appendChild(el);
+    } else if (def.kind === 'curvo' && Number.isFinite(Number(def.radius)) && Number(def.radius) > 0) {
+      // Respect def.radius so changing sprite curvo(R) genuinely resizes the circle
+      const baseDiameter = Math.max(20, Math.min(280, Math.round(Number(def.radius) * 2)));
+      const tamScale = { ppp: 0.45, pp: 0.65, p: 0.85, m: 1.0, g: 1.25, gg: 1.5, ggg: 1.8 };
+      const px = yellow.ajuste
+        ? Math.max(20, Math.min(300, Math.round(baseDiameter * (tamScale[yellow.ajuste.tam] ?? 1))))
+        : baseDiameter;
+      if (yellow.ajuste) {
+        this._applyAjuste(el, yellow.ajuste);
+      } else {
+        el.style.position = 'relative';
+        el.style.margin = '8px auto';
+      }
+      el.style.width = `${px}px`;
+      el.style.height = `${px}px`;
+      this._flowWrap.appendChild(el);
     } else if (yellow.ajuste) {
       const tamPx = { ppp: 40, pp: 64, p: 96, m: 128, g: 168, gg: 210, ggg: 260 };
       const px = tamPx[yellow.ajuste.tam] ?? 128;
@@ -368,6 +443,7 @@ class InterfaceRenderer {
     if (kind === 'botao') {
       el = document.createElement('button');
       el.type = 'button';
+      el.dataset.ccKey = elemKey;
       el.textContent = def.label || elemKey;
       el.className = 'iface-btn';
       el.addEventListener('click', () => this._triggerRerun('click', { key: elemKey }));
@@ -376,6 +452,7 @@ class InterfaceRenderer {
       el.className = 'iface-toggle-label';
       const chk = document.createElement('input');
       chk.type = 'checkbox';
+      chk.dataset.ccKey = elemKey;
       chk.checked = def.valor === true || def.valor === 'true';
       chk.addEventListener('change', () => {
         if (window.__ccElements && window.__ccElements[elemKey]) {
@@ -393,27 +470,63 @@ class InterfaceRenderer {
       const lbl = document.createElement('span');
       lbl.className = 'iface-slider-label';
       lbl.textContent = (def.label || elemKey) + ': ';
-      const inp = document.createElement('input');
-      inp.type = 'range';
-      inp.min = def.extra[0] ?? 0;
-      inp.max = def.extra[1] ?? 100;
-      inp.value = def.valor !== undefined && def.valor !== '' ? def.valor : inp.min;
       const val = document.createElement('span');
       val.className = 'iface-slider-val';
-      val.textContent = String(inp.value);
-      inp.addEventListener('input', () => {
-        val.textContent = inp.value;
-        if (window.__ccElements && window.__ccElements[elemKey]) {
-          window.__ccElements[elemKey].valor = Number(inp.value);
-        }
-      });
-      inp.addEventListener('change', () => {
-        val.textContent = inp.value;
-        if (window.__ccElements && window.__ccElements[elemKey]) {
-          window.__ccElements[elemKey].valor = Number(inp.value);
-        }
-        this._triggerRerun('change', { key: elemKey });
-      });
+
+      let inp;
+      if (this._draggingSlider && this._draggingSlider.key === elemKey && this._draggingSlider.el) {
+        inp = this._draggingSlider.el;
+        inp.min = def.extra[0] ?? 0;
+        inp.max = def.extra[1] ?? 100;
+        val.textContent = String(inp.value);
+      } else {
+        inp = document.createElement('input');
+        inp.type = 'range';
+        inp.dataset.ccKey = elemKey;
+        inp.min = def.extra[0] ?? 0;
+        inp.max = def.extra[1] ?? 100;
+        inp.value = def.valor !== undefined && def.valor !== '' ? def.valor : inp.min;
+        val.textContent = String(inp.value);
+
+        let rafScheduled = false;
+        const syncAndRerun = (eventName) => {
+          val.textContent = inp.value;
+          if (window.__ccElements && window.__ccElements[elemKey]) {
+            window.__ccElements[elemKey].valor = Number(inp.value);
+          }
+          if (!rafScheduled) {
+            rafScheduled = true;
+            requestAnimationFrame(() => {
+              rafScheduled = false;
+              this._triggerRerun(eventName, { key: elemKey });
+            });
+          }
+        };
+
+        const endDrag = () => {
+          if (this._draggingSlider && this._draggingSlider.el === inp) {
+            this._draggingSlider = null;
+          }
+          window.removeEventListener('pointerup', endDrag);
+          window.removeEventListener('pointercancel', endDrag);
+        };
+
+        inp.addEventListener('pointerdown', () => {
+          this._draggingSlider = { key: elemKey, el: inp };
+          window.addEventListener('pointerup', endDrag);
+          window.addEventListener('pointercancel', endDrag);
+        });
+        inp.addEventListener('input', () => syncAndRerun('input'));
+        inp.addEventListener('change', () => {
+          endDrag();
+          val.textContent = inp.value;
+          if (window.__ccElements && window.__ccElements[elemKey]) {
+            window.__ccElements[elemKey].valor = Number(inp.value);
+          }
+          this._triggerRerun('change', { key: elemKey });
+        });
+      }
+
       el.appendChild(lbl);
       el.appendChild(inp);
       el.appendChild(val);
@@ -428,6 +541,7 @@ class InterfaceRenderer {
       }
       const sel = document.createElement('select');
       sel.className = 'iface-select';
+      sel.dataset.ccKey = elemKey;
       for (const opt of (def.extra || [])) {
         const o = document.createElement('option');
         o.value = opt;
@@ -446,14 +560,23 @@ class InterfaceRenderer {
       el = document.createElement('input');
       el.type = 'text';
       el.className = 'iface-input';
+      el.dataset.ccKey = elemKey;
       el.placeholder = def.label || elemKey;
       el.value = String(def.valor || '');
-      el.addEventListener('change', () => {
+      const commit = (immediate = false) => {
         if (window.__ccElements && window.__ccElements[elemKey]) {
           window.__ccElements[elemKey].valor = el.value;
         }
-        this._triggerRerun('input', { key: elemKey });
-      });
+        clearTimeout(this._digiteTimer);
+        if (immediate) {
+          this._triggerRerun('input', { key: elemKey });
+        } else {
+          this._digiteTimer = setTimeout(() => this._triggerRerun('input', { key: elemKey }), 140);
+        }
+      };
+      el.addEventListener('input', () => commit(false));
+      el.addEventListener('change', () => commit(true));
+      el.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') commit(true); });
     } else if (kind === 'pergunte') {
       el = document.createElement('div');
       el.className = 'iface-pergunte';
@@ -465,6 +588,8 @@ class InterfaceRenderer {
       const inp = document.createElement('input');
       inp.type = 'text';
       inp.className = 'iface-input';
+      inp.dataset.ccKey = elemKey;
+      inp.placeholder = 'Digite sua resposta...';
       inp.value = String(def.valor || '');
       const btn = document.createElement('button');
       btn.type = 'button';

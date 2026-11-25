@@ -94,8 +94,13 @@ export function showConfirm({
     };
 
     const onKey = (e) => {
-      if (e.key === 'Escape') close(false);
-      if (e.key === 'Enter') close(true);
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        close(false);
+      } else if (e.key === 'Enter' && document.activeElement !== cancelBtn) {
+        e.preventDefault();
+        close(true);
+      }
     };
 
     cancelBtn.addEventListener('click', () => close(false));

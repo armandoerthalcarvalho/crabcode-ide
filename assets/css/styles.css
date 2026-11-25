@@ -3707,6 +3707,44 @@ body.presentation .btn-presentation-exit { display: block; }
 
 .studio-io-btns .btn { justify-content: center; }
 
+/* Interface mode data tables */
+.iface-table-wrap {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  border-radius: var(--radius);
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  background: rgba(15, 23, 42, 0.28);
+  backdrop-filter: blur(4px);
+}
+
+.iface-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  color: inherit;
+}
+
+.iface-table th,
+.iface-table td {
+  padding: 7px 11px;
+  text-align: left;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+.iface-table th {
+  font-weight: 700;
+  font-size: 11.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: rgba(148, 163, 184, 0.12);
+}
+
+.iface-table tr:last-child td {
+  border-bottom: none;
+}
+
 /* ==================== RESPONSIVE ==================== */
 @media (max-width: 960px) {
   #header {

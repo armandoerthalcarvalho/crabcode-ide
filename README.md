@@ -7,7 +7,9 @@
 **Uma IDE de programação em português, direto no navegador.**
 
 [![Demo Online](https://img.shields.io/badge/Demo-Online-brightgreen?style=for-the-badge&logo=github)](https://armandoerthalcarvalho.github.io/Crab-Code-IDE/)
-[![Status](https://img.shields.io/badge/Status-Estável-blue?style=for-the-badge)]()
+[![CI](https://github.com/armandoerthalcarvalho/Crab-Code-IDE/actions/workflows/ci.yml/badge.svg)](https://github.com/armandoerthalcarvalho/Crab-Code-IDE/actions/workflows/ci.yml)
+[![Pages](https://github.com/armandoerthalcarvalho/Crab-Code-IDE/actions/workflows/pages.yml/badge.svg)](https://github.com/armandoerthalcarvalho/Crab-Code-IDE/actions/workflows/pages.yml)
+[![CodeQL](https://github.com/armandoerthalcarvalho/Crab-Code-IDE/actions/workflows/security.yml/badge.svg)](https://github.com/armandoerthalcarvalho/Crab-Code-IDE/actions/workflows/security.yml)
 [![Licença](https://img.shields.io/badge/Licen%C3%A7a-Todos%20os%20direitos%20reservados-red?style=for-the-badge)]()
 
 [🚀 Experimente Agora](https://armandoerthalcarvalho.github.io/Crab-Code-IDE/) · [📖 Documentação embutida](#) · [🐛 Reportar Bug](https://github.com/armandoerthalcarvalho/Crab-Code-IDE/issues)
@@ -18,11 +20,11 @@
 
 ## 📌 O que é o CrabCode?
 
-**CrabCode** é uma IDE educacional completa que funciona diretamente no navegador, sem instalação. Ela permite aprender lógica de programação usando uma **linguagem própria em português**, com sintaxe simples e amigável — ideal para iniciantes, estudantes do ensino fundamental e médio, e qualquer pessoa que queira dar os primeiros passos na programação.
+**CrabCode** é uma IDE educacional completa que funciona diretamente no navegador, sem instalação, construída **100% em HTML5, CSS3 e JavaScript Vanilla (ES6 Modules)**. Ela permite aprender lógica de programação usando uma **linguagem própria em português**, com sintaxe simples e amigável — ideal para iniciantes, estudantes do ensino fundamental e médio, e projetos STEM.
 
-Além do lado educacional, o CrabCode é equipado com um ecossistema de **bibliotecas matemáticas e científicas** voltadas à análise STEM, tornando-o também útil para cálculos e visualizações mais avançadas.
+Além do lado educacional, o CrabCode é equipado com um ecossistema de **100 bibliotecas oficiais matemáticas, científicas, financeiras e de computação**, além de um modo de **Interfaces Interativas**, **Estúdio de Pixel Art Multi-Quadros** e **Importador CSV blindado**.
 
-> 💡 **Tudo acontece no navegador.** Nenhuma instalação, nenhum servidor, nenhuma conta necessária.
+> 💡 **Tudo acontece localmente no navegador.** Nenhuma instalação, nenhuma conta e nenhum servidor externo obrigatório.
 
 ---
 
@@ -30,22 +32,18 @@ Além do lado educacional, o CrabCode é equipado com um ecossistema de **biblio
 
 | Funcionalidade | Descrição |
 |---|---|
-| 🧠 **Linguagem própria em PT-BR** | Sintaxe simples e legível em português (`defina`, `se`, `repita`, `apresente`...) |
-| ⚡ **Execução em sandbox** | Código roda de forma segura num iframe isolado, sem risco ao navegador |
-| 🎨 **Destaque de sintaxe** | Colorização em tempo real enquanto você digita |
-| 🔍 **Autocompletar** | Sugestões inteligentes de palavras-chave, funções e variáveis |
-| ⚠️ **Painel de erros** | Erros de léxico e sintaxe exibidos em tempo real com número de linha |
-| 📚 **Tutorial interativo** | Tutorial completo embutido na própria IDE |
-| 📖 **Documentação embutida** | Referência completa da linguagem acessível com um clique |
-| 📊 **Sistema de Dados (CSV)** | Importe tabelas CSV e use os dados diretamente no código |
-| 🔧 **Bibliotecas oficiais** | Conjunto de bibliotecas matemáticas, estatísticas e STEM prontas para uso |
-| 🛠️ **Bibliotecas personalizadas** | Crie e salve suas próprias bibliotecas em CrabCode |
-| 💾 **Scripts salvos** | Salve, organize e recarregue seus projetos localmente |
-| 🌙 **Tema claro/escuro** | Alternância entre tema escuro (Catppuccin Mocha) e claro |
-| 📷 **Exportar como PNG** | Exporte seu código como imagem |
-| 📄 **Exportar como PDF** | Gere um PDF com código e output |
-| 🖥️ **Modo Apresentação** | Exibe o output em tela cheia para apresentações |
-| ↔️ **Painel redimensionável** | Ajuste o espaço entre editor e output arrastando o divisor |
+| 🧠 **Linguagem própria em PT-BR** | Sintaxe simples e legível (`defina`, `se`, `repita`, `apresente`, `importe interface`, sprites dinâmicos) |
+| ⚡ **Execução em sandbox** | Código roda de forma segura em ambiente isolado com detecção de loops infinitos |
+| 🎨 **Destaque de sintaxe & Autocompletar** | Colorização em tempo real e sugestões inteligentes de comandos, funções e variáveis |
+| ⚠️ **Painel de Problemas (Linter + Semântica)** | Detecta erros léxicos, sintáticos, variáveis não declaradas, aridade, RGB fora de faixa e variáveis não usadas |
+| 📚 **Tutorial com 96 Lições Progressivas** | 12 módulos graduais com demonstração executável, desafio prático e solução oculta testada |
+| 📖 **Documentação Completa (16 Capítulos)** | Manual de referência pesquisável com exemplos executáveis com 1 clique |
+| 📊 **Sistema de Dados CSV Blindado** | Detecção automática de delimitador/decimal BR-US, higienização de cabeçalhos, auditoria de qualidade e prévia tabular |
+| 🔧 **100 Bibliotecas Oficiais + Personalizadas** | Catálogo STEM ranqueado por selos + criador de bibliotecas próprias em CrabCode |
+| 🎮 **Estúdio de Pixel Art Multi-Quadros** | Grade 8×8 a 64×64, simetria, onion skin, linha do tempo, 16+ pixel-arts prontas, exportação PNG/JSON |
+| 💾 **Scripts Salvos Locais** | Salve, edite, duplique, exporte/importe `.crab` e faça backup JSON no armazenamento local |
+| 🌙 **Tema Claro e Escuro** | Alternância instantânea entre tema escuro e tema claro |
+| 📷 **Exportação & Apresentação** | Exporte PNG, PDF, HTML interativo ou apresente em tela cheia |
 
 ---
 
@@ -71,7 +69,7 @@ execute "Aprovado" se nota >= 7 senao "Reprovado"
 ### Laços de repetição
 ```
 execute 'Crab Code é Incrível!' repita 5 vezes
-  
+
 defina i como 1
 altere i para i+1 enquanto i<10
 ```
@@ -111,32 +109,42 @@ Acesse diretamente no navegador, sem instalar nada:
 
 ---
 
-### 💻 Opção 2 — Rodar localmente
+### 💻 Opção 2 — Rodar localmente & Verificar com CI
 
 > ⚠️ **Importante:** por usar ES6 Modules nativos, o projeto **precisa ser servido via HTTP** — não funciona ao abrir o `index.html` diretamente pelo explorador de arquivos (`file://`).
 
-**1. Clone o repositório:**
+**1. Clone o repositório e instale as dependências do servidor local:**
 ```bash
 git clone https://github.com/armandoerthalcarvalho/Crab-Code-IDE.git
 cd Crab-Code-IDE
+npm install
 ```
 
-**2. Inicie um servidor local.** Escolha uma das opções abaixo:
-
+**2. Inicie o servidor local (porta 3000):**
 ```bash
-# Python 3
-python -m http.server 8080
-
-# Node.js (npx, sem instalação)
-npx serve .
-
-# VS Code: instale a extensão "Live Server" e clique em "Go Live"
+npm run dev
 ```
 
-**3. Abra no navegador:**
+**3. Execute a suíte completa de verificação (mesma pipeline do GitHub Actions):**
+```bash
+npm run verify
 ```
-http://localhost:8080
-```
+Isso executa:
+- `npm run lint` — verificação sintática de todos os módulos ES6 e servidor
+- `npm run check:integrity` — auditoria de assets, IDs de DOM, diálogos bloqueantes e de todos os códigos CrabCode do tutorial, documentação, templates e bibliotecas
+- `npm test` — suíte automatizada (`node:test`) do compilador, runtime, interface reativa, CSV e servidor
+- `npm run build` — checagem final de empacotamento
+
+---
+
+## 🤖 GitHub Actions configurados
+
+Este workspace está pronto para automação completa no GitHub:
+- **`.github/workflows/ci.yml`** — Executa `lint`, `check:integrity`, `test` e `build` em Node.js 20 e 22 a cada push/PR.
+- **`.github/workflows/pages.yml`** — Valida toda a suíte e publica automaticamente a IDE estática no GitHub Pages.
+- **`.github/workflows/security.yml`** — Análise semanal e por PR com CodeQL.
+- **`.github/dependabot.yml`** — Atualizações automáticas semanais de npm e GitHub Actions.
+- **Templates de Issue e Pull Request** em `.github/`.
 
 ---
 

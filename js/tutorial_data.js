@@ -457,11 +457,12 @@ apresente "Luz acesa: " + luz_acesa em apresentacao
 apresente "Porta trancada: " + porta_trancada em apresentacao`,
         tip: 'Não coloque aspas em verdadeiro ou falso — sem aspas eles são valores lógicos reais.',
         exercise: {
-          question: 'Defina ativo como verdadeiro e pausado como falso, depois exiba ativo com execute.',
-          hint: 'defina ativo como verdadeiro, defina pausado como falso, execute ativo.',
+          question: 'Defina ativo como verdadeiro e pausado como falso, depois exiba ambos com execute.',
+          hint: 'defina ativo como verdadeiro, defina pausado como falso, execute ativo e execute pausado.',
           solution: `defina ativo como verdadeiro
 defina pausado como falso
-execute ativo`,
+execute ativo
+execute pausado`,
         },
       },
       {
@@ -1507,15 +1508,15 @@ apresente "Alerta!" em destaque cor de texto 248 113 113`,
       {
         num: 84,
         title: 'Posicionando com ajuste POS TAM',
-        concept: 'Alinhar e dimensionar elementos rapidamente com ajuste (centro, esquerda, direita + p, m, g).',
-        explanation: 'Adicione <code>ajuste POSICAO TAMANHO</code> ao final do <code>apresente</code>. Posições: <code>esquerda</code>, <code>centro</code>, <code>direita</code>, <code>cima</code>, <code>baixo</code>. Tamanhos: <code>p</code> (pequeno), <code>m</code> (médio), <code>g</code> (grande).',
+        concept: 'Alinhar e dimensionar elementos rapidamente com ajuste (esquerda, centro, direita + p, m, g).',
+        explanation: 'Adicione <code>ajuste POSICAO TAMANHO</code> ao final do <code>apresente</code>. Posições válidas: <code>esquerda</code>, <code>centroesquerda</code>, <code>centro</code>, <code>centrodireita</code> e <code>direita</code>. Tamanhos: <code>ppp</code>, <code>pp</code>, <code>p</code>, <code>m</code>, <code>g</code>, <code>gg</code> e <code>ggg</code>.',
         code: `importe interface
 execute cor de fundo 15 23 42
 execute cor de texto 241 245 249
 apresente "Título Central Grande" em destaque ajuste centro g
 apresente "Legenda à esquerda" em texto ajuste esquerda p
 apresente "Rodapé à direita" em texto ajuste direita m`,
-        tip: 'Posições inválidas são sinalizadas na hora pelo analisador estático.',
+        tip: 'Posições ou tamanhos inválidos são sinalizados na hora pelo analisador estático (E_AJUSTE_INVALID).',
         exercise: {
           question: 'Crie uma tela escura (15 23 42) com texto claro (240 245 255) e apresente "Centralizado" em destaque ajuste centro g.',
           hint: 'Termine o apresente com ajuste centro g.',
@@ -1591,22 +1592,22 @@ apresente sol em sprite ajuste centro m`,
       {
         num: 88,
         title: 'Fundo condicional com cor de fundo ... se ... senao',
-        concept: 'Alterar a cor de fundo da interface dinamicamente conforme uma condição.',
-        explanation: 'Você pode aplicar <code>se ... senao</code> diretamente no comando <code>cor de fundo</code> para mudar o clima visual da tela conforme o valor de uma variável.',
+        concept: 'Alterar a cor de fundo e de texto da interface dinamicamente conforme uma condição.',
+        explanation: 'Você pode aplicar <code>se ... senao</code> diretamente nos comandos <code>cor de fundo</code> e <code>cor de texto</code> para adaptar toda a interface ao valor de uma variável.',
         code: `importe interface
 defina alerta como verdadeiro
 execute cor de fundo 127 29 29 se alerta senao 20 83 45
 execute cor de texto 255 255 255
-apresente "Estado: EMERGÊNCIA" em destaque ajuste centro g`,
-        tip: 'Experimente mudar alerta para falso e rode novamente para ver o fundo ficar verde!',
+apresente rodar(execute "Estado: EMERGÊNCIA" se alerta senao "Estado: NORMAL") em destaque ajuste centro g`,
+        tip: 'Experimente mudar alerta para falso e rode novamente — tanto o fundo quanto o texto reagem imediatamente!',
         exercise: {
-          question: 'Defina modo_noite como verdadeiro e use execute cor de fundo 15 23 42 se modo_noite senao 241 245 249, exibindo "Tema Dinâmico" em destaque.',
-          hint: 'Adicione cor de texto adequada e apresente o título.',
+          question: 'Defina modo_noite como verdadeiro, mude cor de fundo (15 23 42 ou 241 245 249) e cor de texto (241 245 249 ou 15 23 42) com se/senao e exiba o nome do tema ativo.',
+          hint: 'Use se modo_noite senao tanto em cor de fundo quanto em cor de texto para manter contraste legível.',
           solution: `importe interface
 defina modo_noite como verdadeiro
 execute cor de fundo 15 23 42 se modo_noite senao 241 245 249
-execute cor de texto 241 245 249
-apresente "Tema Dinâmico" em destaque ajuste centro m`,
+execute cor de texto 241 245 249 se modo_noite senao 15 23 42
+apresente rodar(execute "Tema Escuro Ativo" se modo_noite senao "Tema Claro Ativo") em destaque ajuste centro m`,
         },
       },
     ],
@@ -1680,119 +1681,125 @@ apresente mudo em botao ajuste centro m`,
       {
         num: 91,
         title: 'Interruptor liga/desliga com toggle(...)',
-        concept: 'Criar uma chave booleana interativa e ler seu estado em nome.valor.',
-        explanation: 'O controle <code>toggle("Rótulo")</code> cria um interruptor que alterna entre <code>verdadeiro</code> e <code>falso</code>. Leia o estado atual usando <code>meu_toggle.valor</code>.',
+        concept: 'Criar uma chave booleana interativa e usar nome.valor para alterar cores e textos.',
+        explanation: 'O controle <code>toggle("Rótulo")</code> cria um interruptor que alterna entre <code>verdadeiro</code> e <code>falso</code>. Leia o estado atual usando <code>meu_toggle.valor</code> para reagir visualmente.',
         code: `importe interface
 defina luz como funcao() toggle("Lâmpada da Sala")
 execute cor de fundo 254 243 199 se luz.valor senao 15 23 42
 execute cor de texto 30 41 59 se luz.valor senao 241 245 249
 apresente "Controle de Iluminação" em destaque ajuste centro m
 apresente luz em toggle ajuste centro m
-apresente "Lâmpada acesa: " + luz.valor em texto ajuste centro p`,
-        tip: 'Sempre exiba o controle com apresente nome em toggle para que o usuário possa interagir com ele.',
+apresente rodar(execute "Lâmpada ACESA" se luz.valor senao "Lâmpada apagada") em apresentacao ajuste centro m`,
+        tip: 'Sempre exiba o controle com apresente nome em toggle e ligue nome.valor às cores ou textos da tela.',
         exercise: {
-          question: 'Crie um toggle("Modo Econômico") chamado eco, apresente-o em toggle e mostre "Economia ativa: " + eco.valor em texto.',
-          hint: 'defina eco como funcao() toggle("Modo Econômico").',
+          question: 'Crie um toggle("Modo Econômico") chamado eco que mude o fundo para verde (20 83 45) quando ligado e escuro (15 23 42) quando desligado, exibindo o estado em destaque.',
+          hint: 'Use execute cor de fundo 20 83 45 se eco.valor senao 15 23 42.',
           solution: `importe interface
-execute cor de fundo 15 23 42
-execute cor de texto 241 245 249
 defina eco como funcao() toggle("Modo Econômico")
+execute cor de fundo 20 83 45 se eco.valor senao 15 23 42
+execute cor de texto 241 245 249
 apresente eco em toggle ajuste centro m
-apresente "Economia ativa: " + eco.valor em texto ajuste centro m`,
+apresente rodar(execute "Modo Econômico: ATIVO" se eco.valor senao "Modo Econômico: Desligado") em destaque ajuste centro m`,
         },
       },
       {
         num: 92,
         title: 'Controle deslizante com slider("Rótulo", min, max)',
-        concept: 'Permitir que o usuário ajuste um número continuamente entre um mínimo e um máximo.',
-        explanation: 'O <code>slider("Rótulo", minimo, maximo)</code> oferece uma barra deslizante interativa. O valor escolhido fica disponível em <code>meu_slider.valor</code>.',
+        concept: 'Ajustar um número em tempo real e aplicar slider.valor em cores, cálculos e visuais.',
+        explanation: 'O <code>slider("Rótulo", minimo, maximo)</code> oferece uma barra deslizante interativa. O valor escolhido em <code>meu_slider.valor</code> atualiza variáveis derivadas e até os canais RGB de <code>cor de fundo</code> ao vivo!',
         code: `importe interface
-execute cor de fundo 15 23 42
-execute cor de texto 241 245 249
 defina brilho como funcao() slider("Brilho da Tela", 0, 100)
-apresente "Ajuste de Brilho" em destaque ajuste centro m
+defina tom como 15 + brilho.valor * 2
+execute cor de fundo tom tom (tom + 18)
+execute cor de texto 15 23 42 se brilho.valor > 55 senao 241 245 249
+apresente "Ajuste de Brilho ao Vivo" em destaque ajuste centro m
 apresente brilho em slider ajuste centro m
 apresente "Brilho atual: " + brilho.valor + "%" em apresentacao ajuste centro m`,
-        tip: 'O valor mínimo precisa ser sempre menor que o máximo (ex: 0, 100).',
+        tip: 'Arraste o controle e veja o fundo clarear/escurecer e o texto adaptar o contraste automaticamente!',
         exercise: {
-          question: 'Crie um slider("Temperatura °C", 16, 30) chamado clima e exiba "Meta: " + clima.valor + " °C" em destaque.',
-          hint: 'defina clima como funcao() slider("Temperatura °C", 16, 30).',
+          question: 'Crie um slider("Temperatura °C", 16, 30) chamado clima que mude o fundo entre azul frio (<= 21), verde ameno e vermelho quente (>= 26) e exiba a meta em °C.',
+          hint: 'Use cor de fundo condicional com clima.valor >= 26 e clima.valor <= 21.',
           solution: `importe interface
-execute cor de fundo 15 23 42
-execute cor de texto 241 245 249
 defina clima como funcao() slider("Temperatura °C", 16, 30)
+execute cor de fundo 153 27 27 se clima.valor >= 26 senao 20 83 45
+execute cor de fundo 30 58 138 se clima.valor <= 21
+execute cor de texto 241 245 249
 apresente clima em slider ajuste centro m
-apresente "Meta: " + clima.valor + " °C" em destaque ajuste centro m`,
+apresente "Meta: " + clima.valor + " °C (" + rodar(execute "Quente" se clima.valor >= 26 senao rodar(execute "Frio" se clima.valor <= 21 senao "Confortável")) + ")" em destaque ajuste centro g`,
         },
       },
       {
         num: 93,
         title: 'Menu suspenso com seletor("Rótulo", "op1", "op2", ...)',
-        concept: 'Oferecer uma lista fechada de opções selecionáveis.',
-        explanation: 'Com <code>seletor("Rótulo", "Opção 1", "Opção 2", ...)</code> o usuário escolhe um item de um menu suspenso. Leia a opção escolhida em <code>meu_seletor.valor</code>.',
+        concept: 'Oferecer uma lista fechada de opções que alteram o visual e o preço/regra da tela.',
+        explanation: 'Com <code>seletor("Rótulo", "Opção 1", "Opção 2", ...)</code> o usuário escolhe um item de um menu suspenso. Leia a opção escolhida em <code>meu_seletor.valor</code> para mudar dados e cores da interface.',
         code: `importe interface
-execute cor de fundo 15 23 42
-execute cor de texto 241 245 249
 defina plano como funcao() seletor("Plano", "Básico", "Pro", "Equipe")
+execute cor de fundo 49 46 129 se plano.valor = "Equipe" senao 15 23 42
+execute cor de fundo 17 94 89 se plano.valor = "Pro"
+execute cor de texto 241 245 249
 apresente "Escolha seu Plano" em destaque ajuste centro m
 apresente plano em seletor ajuste centro m
-apresente "Selecionado: " + plano.valor em apresentacao ajuste centro m`,
-        tip: 'Informe pelo menos uma opção após o rótulo do seletor.',
+defina preco como rodar(execute "R$ 199/mês" se plano.valor = "Equipe" senao rodar(execute "R$ 79/mês" se plano.valor = "Pro" senao "R$ 29/mês"))
+apresente "Selecionado: " + plano.valor + " — " + preco em apresentacao ajuste centro g`,
+        tip: 'Informe pelo menos uma opção após o rótulo do seletor e reaja a cada escolha com se/senao.',
         exercise: {
-          question: 'Crie um seletor("Dificuldade", "Fácil", "Médio", "Difícil") chamado dif, apresente-o em seletor e mostre "Modo: " + dif.valor.',
-          hint: 'apresente dif em seletor e depois apresente "Modo: " + dif.valor em texto.',
+          question: 'Crie um seletor("Dificuldade", "Fácil", "Médio", "Difícil") chamado dif que mude a cor de fundo conforme a dificuldade e exiba o modo e a velocidade correspondente.',
+          hint: 'Compare dif.valor = "Difícil" e dif.valor = "Fácil" para mudar cor e texto.',
           solution: `importe interface
-execute cor de fundo 15 23 42
-execute cor de texto 241 245 249
 defina dif como funcao() seletor("Dificuldade", "Fácil", "Médio", "Difícil")
+execute cor de fundo 127 29 29 se dif.valor = "Difícil" senao 30 41 59
+execute cor de fundo 20 83 45 se dif.valor = "Fácil"
+execute cor de texto 241 245 249
 apresente dif em seletor ajuste centro m
-apresente "Modo: " + dif.valor em texto ajuste centro m`,
+defina vel como rodar(execute "3x (Extremo)" se dif.valor = "Difícil" senao rodar(execute "1x (Calmo)" se dif.valor = "Fácil" senao "2x (Padrão)"))
+apresente "Modo: " + dif.valor + " · Velocidade " + vel em destaque ajuste centro g`,
         },
       },
       {
         num: 94,
         title: 'Campos de texto com digite(...) e pergunte(...)',
-        concept: 'Capturar texto digitado pelo usuário diretamente na tela da interface.',
-        explanation: 'Use <code>digite("placeholder")</code> para um campo de texto simples ou <code>pergunte("Pergunta?")</code> para um campo com pergunta em destaque. O texto digitado fica em <code>campo.valor</code>.',
+        concept: 'Capturar texto digitado pelo usuário e atualizar a interface em tempo real.',
+        explanation: 'Use <code>digite("placeholder")</code> para captura contínua enquanto digita ou <code>pergunte("Pergunta?")</code> para envio com botão OK / Enter. O texto fica disponível em <code>campo.valor</code>.',
         code: `importe interface
-execute cor de fundo 15 23 42
-execute cor de texto 241 245 249
 defina usuario como funcao() pergunte("Qual é o seu nome?")
+execute cor de fundo 17 94 89 se usuario.valor != "" senao 15 23 42
+execute cor de texto 241 245 249
 apresente "Cadastro Rápido" em destaque ajuste centro m
 apresente usuario em pergunte ajuste centro m
-apresente "Olá, " + usuario.valor + "!" em apresentacao ajuste centro m`,
-        tip: 'Pressione Enter ou clique fora do campo para disparar a atualização da tela.',
+apresente rodar(execute "Olá, " + usuario.valor + "! Bem-vindo." se usuario.valor != "" senao "Digite seu nome acima e clique em OK.") em apresentacao ajuste centro g`,
+        tip: 'Tratar o caso vazio (campo.valor != "") deixa sua interface muito mais polida antes de o usuário digitar.',
         exercise: {
-          question: 'Crie um campo usando digite("Digite sua cidade") chamado cid, apresente-o em digite e mostre "Cidade: " + cid.valor em texto.',
-          hint: 'defina cid como funcao() digite("Digite sua cidade") e apresente cid em digite.',
+          question: 'Crie um campo digite("Digite sua cidade") chamado cid que destaque a tela assim que o usuário digitar algo e exiba "Cidade escolhida: ..." em destaque.',
+          hint: 'Use cid.valor != "" para alternar cor de fundo e mensagem.',
           solution: `importe interface
-execute cor de fundo 15 23 42
-execute cor de texto 241 245 249
 defina cid como funcao() digite("Digite sua cidade")
+execute cor de fundo 30 58 138 se cid.valor != "" senao 15 23 42
+execute cor de texto 241 245 249
 apresente cid em digite ajuste centro m
-apresente "Cidade: " + cid.valor em texto ajuste centro m`,
+apresente rodar(execute "Cidade escolhida: " + cid.valor se cid.valor != "" senao "Comece a digitar sua cidade acima...") em destaque ajuste centro g`,
         },
       },
       {
         num: 95,
         title: 'Capturando o teclado com tecla.valor',
         concept: 'Ler a última tecla pressionada na interface usando o objeto global tecla.',
-        explanation: 'No modo Interface, o objeto nativo <code>tecla</code> registra automaticamente as teclas pressionadas quando a tela está em foco. Use <code>tecla.valor</code> para reagir a setas ou letras.',
+        explanation: 'No modo Interface, o objeto nativo <code>tecla</code> registra automaticamente as teclas pressionadas quando a saída está em foco. Use <code>tecla.valor</code> para reagir a setas, espaço ou letras.',
         code: `importe interface
-execute cor de fundo 15 23 42
+execute cor de fundo 49 46 129 se tecla.valor != "" senao 15 23 42
 execute cor de texto 241 245 249
 apresente "Leitor de Teclado" em destaque ajuste centro m
-apresente "Última tecla pressionada: " + tecla.valor em apresentacao ajuste centro m
-apresente "Clique na tela de saída e pressione qualquer tecla." em texto ajuste centro p`,
+apresente rodar(execute "Última tecla pressionada: " + tecla.valor se tecla.valor != "" senao "Nenhuma tecla pressionada ainda.") em apresentacao ajuste centro g
+apresente "Clique fora do editor (na tela de saída) e pressione qualquer tecla." em texto ajuste centro p`,
         tip: 'tecla.atual guarda a tecla apenas no instante exato do evento; tecla.valor mantém a última tecla lida.',
         exercise: {
-          question: 'Crie uma tela que exibe o título "Monitor de Teclas" em destaque e mostra "Tecla: " + tecla.valor em apresentacao.',
-          hint: 'Use importe interface e tecla.valor.',
+          question: 'Crie uma tela que muda de cor ao detectar qualquer tecla pressionada e exibe "Tecla detectada: " + tecla.valor.',
+          hint: 'Compare tecla.valor != "" em cor de fundo e na mensagem.',
           solution: `importe interface
-execute cor de fundo 15 23 42
+execute cor de fundo 20 83 45 se tecla.valor != "" senao 15 23 42
 execute cor de texto 241 245 249
 apresente "Monitor de Teclas" em destaque ajuste centro m
-apresente "Tecla: " + tecla.valor em apresentacao ajuste centro m`,
+apresente rodar(execute "Tecla detectada: " + tecla.valor se tecla.valor != "" senao "Pressione qualquer tecla...") em apresentacao ajuste centro g`,
         },
       },
       {

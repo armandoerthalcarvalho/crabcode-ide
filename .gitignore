@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+server/node_modules/
+
+# Environment & local secrets
+.env
+.env.local
+.env.*.local
+
+# Build, deploy & test artifacts
+_site/
+dist/
+coverage/
+.playwright-cli/
+*.log
+npm-debug.log*
+
+# OS & editor files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.vscode/
+.idea/

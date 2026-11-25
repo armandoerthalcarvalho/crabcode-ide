@@ -3,6 +3,7 @@ import { LIB_CATEGORY_LIST } from './extra_libs.js';
 import { escapeHtml, highlightLine } from './utils.js';
 import { scheduleHighlight } from './editor.js';
 import { showToast, showConfirm, copyText } from './ui.js';
+import { isReservedDatasetKey, getCsvDatasets } from './storage.js';
 
 // ==================== LIBS FILTER STATE ====================
 let _activeCategory = 'Todas';
@@ -360,6 +361,17 @@ function saveLibFromModal() {
     showToast(`"${key}" já é uma biblioteca oficial. Escolha outro nome.`, 'error');
     return;
   }
+  if (isReservedDatasetKey(key)) {
+    showToast(`"${key}" é uma palavra reservada do CrabCode. Escolha outra chave.`, 'error');
+    keyEl.focus();
+    return;
+  }
+  const existingCsvs = getCsvDatasets();
+  if (existingCsvs[key]) {
+    showToast(`Já existe um dataset CSV chamado "${key}". Escolha outra chave para evitar conflito.`, 'error');
+    keyEl.focus();
+    return;
+  }
   if (!/^[a-zA-ZÀ-ÿ_][a-zA-ZÀ-ÿ0-9_]*$/.test(key)) {
     showToast('A chave deve começar com letra/_ e conter apenas letras, números e _.', 'error');
     return;
@@ -371,17 +383,42 @@ function saveLibFromModal() {
     return;
   }
 
-  const firstFn = result.exports[0];
+  // Extract actual parameter signatures from custom library definitions
+  const paramMap = {};
+  const fnDefRe = /defina\s+([a-zA-ZÀ-ÿ_][a-zA-ZÀ-ÿ0-9_]*)\s+como\s+funcao\s*\(([^)]*)\)/gi;
+  let m;
+  while ((m = fnDefRe.exec(code)) !== null) {
+    paramMap[m[1]] = m[2].trim();
+  }
+
+  const functions = result.exports.map(name => ({
+    name,
+    params: Object.prototype.hasOwnProperty.call(paramMap, name) ? paramMap[name] : '',
+    desc: Object.prototype.hasOwnProperty.call(paramMap, name) ? 'Função personalizada' : 'Constante / variável personalizada',
+  }));
+
+  const firstFn = functions.find(f => Object.prototype.hasOwnProperty.call(paramMap, f.name)) || functions[0];
+  let example = `importe ${key}`;
+  if (firstFn) {
+    if (Object.prototype.hasOwnProperty.call(paramMap, firstFn.name)) {
+      const argCount = firstFn.params ? firstFn.params.split(',').filter(Boolean).length : 0;
+      const sampleArgs = Array.from({ length: argCount }, (_, idx) => String(idx + 2)).join(', ');
+      example = `importe ${key}\napresente rodar(execute ${firstFn.name}(${sampleArgs})) em destaque`;
+    } else {
+      example = `importe ${key}\napresente ${firstFn.name} em destaque`;
+    }
+  }
+
   const lib = {
     key,
     title,
     description: desc || 'Biblioteca personalizada',
     category: 'Personalizadas',
     exports: result.exports,
-    functions: result.exports.map(name => ({ name, params: '...', desc: 'Função personalizada' })),
+    functions,
     jsCode: result.jsCode,
     sourceCode: code,
-    example: firstFn ? `importe ${key}\napresente "${title} carregada!" em texto` : `importe ${key}`,
+    example,
   };
 
   CrabLibRegistry.saveCustomLib(lib);

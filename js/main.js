@@ -96,22 +96,26 @@ apresente "Temperatura de melting: " + rodar(execute temperatura_melting(dna)) +
     id: 'interactive_app',
     title: 'App Interativo (Botão + Slider + Toggle)',
     tag: 'Interface',
-    desc: 'Interface reativa com estado persistente, botões de ação e controles visuais.',
+    desc: 'Interface reativa com estado persistente, botões com bônus Turbo, slider de raio/energia e cor dinâmica.',
     code: `importe interface
-execute cor de fundo 15 23 42
-execute cor de texto 241 245 249
 defina pontos como 0
-defina intensidade como funcao() slider("Intensidade", 0, 100)
-defina turbo como funcao() toggle("Modo Turbo")
-defina ganhar como funcao() botao("+10 Pontos") altere pontos para pontos + 10
+defina intensidade como funcao() slider("Intensidade", 10, 100)
+defina turbo como funcao() toggle("Modo Turbo (2.5x)")
+execute cor de fundo 49 46 129 se turbo.valor senao 15 23 42
+execute cor de texto 241 245 249
+defina ganho como rodar(execute 25 se turbo.valor senao 10)
+defina energia como pontos + intensidade.valor * 2
+defina ganhar como funcao() botao("Ganhar Pontos") altere pontos para pontos + 25 se turbo.valor senao pontos + 10
 defina zerar como funcao() botao("Resetar") altere pontos para 0
+defina nucleo como sprite curvo(15 + intensidade.valor / 2) com cor (155 + intensidade.valor) 115 249
 apresente "Painel Interativo CrabCode" em destaque ajuste centro g
-apresente "Pontuação: " + pontos em apresentacao ajuste centro g
+apresente nucleo em sprite ajuste centro m
+apresente "Pontuação: " + pontos + " (+" + ganho + "/clique) · Energia: " + energia em apresentacao ajuste centro g
 apresente ganhar em botao ajuste centro m
 apresente zerar em botao ajuste centro p
 apresente intensidade em slider ajuste centro m
 apresente turbo em toggle ajuste centro m
-apresente "Intensidade atual: " + intensidade.valor + "%" em texto ajuste centro p`,
+apresente rodar(execute "Modo Turbo ATIVO — fundo índigo e +25 pts!" se turbo.valor senao "Modo Normal — ative o Turbo ou arraste a Intensidade.") em texto ajuste centro g`,
   },
 ];
 
@@ -389,13 +393,24 @@ function closeTemplatesModal() {
   if (modal) modal.style.display = 'none';
 }
 
+// ==================== MODAL HELPER ====================
+function isAnyModalOpen() {
+  if (document.querySelector('.cc-confirm-overlay')) return true;
+  return ['script-modal', 'lib-modal', 'csv-modal', 'image-modal', 'templates-modal'].some(id => {
+    const el = document.getElementById(id);
+    return el && el.style.display !== 'none';
+  });
+}
+
 // ==================== KEYBOARD SHORTCUTS ====================
 function initShortcuts() {
   document.addEventListener('keydown', (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+      if (isAnyModalOpen()) return;
       e.preventDefault();
       runCode(false);
     } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+      if (isAnyModalOpen()) return;
       e.preventDefault();
       const active = getActiveScript();
       saveCode({ syncActiveScript: true });
@@ -405,14 +420,18 @@ function initShortcuts() {
         showToast('Rascunho salvo no navegador.', 'success', 1400);
       }
     } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'l') {
+      if (isAnyModalOpen()) return;
       e.preventDefault();
       clearOutput();
     } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+      if (document.querySelector('.cc-confirm-overlay')) return;
       e.preventDefault();
       const modal = document.getElementById('templates-modal');
       if (modal && modal.style.display === 'flex') closeTemplatesModal();
       else openTemplatesModal();
     } else if (e.key === 'Escape') {
+      // Let confirm dialog handle its own Escape first without closing underlying modals
+      if (document.querySelector('.cc-confirm-overlay')) return;
       if (isPresentationMode) exitPresentation();
       closeTemplatesModal();
       closeScriptModal();
@@ -795,7 +814,7 @@ function init() {
 
   // Interface mode re-run on interactive element events (preserves __ccState!)
   window.addEventListener('crab-rerun', () => { runCode(true); });
-  window.addEventListener('crab-highlight-refresh', () => { scheduleHighlight(); });
+  window.addEventListener('crab-highlight-refresh', () => { updateEditor(); });
 
   // Tab buttons
   document.querySelectorAll('.tab').forEach(tab => {
@@ -828,6 +847,12 @@ function init() {
   const csvDropzone = document.getElementById('csv-dropzone');
   const csvFileInput = document.getElementById('csv-file-input');
   csvDropzone?.addEventListener('click', () => csvFileInput?.click());
+  csvDropzone?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      csvFileInput?.click();
+    }
+  });
   csvDropzone?.addEventListener('dragover', (e) => { e.preventDefault(); csvDropzone.classList.add('dragover'); });
   csvDropzone?.addEventListener('dragleave', () => csvDropzone.classList.remove('dragover'));
   csvDropzone?.addEventListener('drop', (e) => {
@@ -852,12 +877,18 @@ function init() {
   // Presentation exit button
   document.getElementById('btn-presentation-exit')?.addEventListener('click', exitPresentation);
 
-  // Close modals on backdrop click
-  ['script-modal', 'lib-modal', 'csv-modal', 'templates-modal'].forEach(id => {
+  // Close modals on backdrop click using their real close handlers (resets editing state!)
+  const modalCloseMap = [
+    ['script-modal', closeScriptModal],
+    ['lib-modal', closeLibModal],
+    ['csv-modal', closeCsvModal],
+    ['templates-modal', closeTemplatesModal],
+  ];
+  for (const [id, closeFn] of modalCloseMap) {
     document.getElementById(id)?.addEventListener('click', (e) => {
-      if (e.target === e.currentTarget) e.currentTarget.style.display = 'none';
+      if (e.target === e.currentTarget) closeFn();
     });
-  });
+  }
 
   scheduleHighlight();
   if (codeEditor.value.trim()) {

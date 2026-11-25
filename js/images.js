@@ -541,7 +541,24 @@ export function openImageModal(existingKey = null, presetObj = null) {
 
   syncSizeControl();
   if (fpsInput) fpsInput.value = String(state.fps);
-  if (fpsVal) fpsVal.textContent = `${state.fps} FPS`;
+  if (fpsVal) fpsVal.textContent = String(state.fps);
+  const brushSel = document.getElementById('pixel-brush-size');
+  if (brushSel) brushSel.value = String(state.brushSize);
+  const mirrorSel = document.getElementById('pixel-mirror-mode');
+  if (mirrorSel) mirrorSel.value = state.mirror;
+  const gridToggle = document.getElementById('pixel-grid-toggle');
+  if (gridToggle) gridToggle.checked = !!state.showGrid;
+  const onionToggle = document.getElementById('pixel-onion-toggle');
+  if (onionToggle) onionToggle.checked = !!state.onionSkin;
+  const paletteSel = document.getElementById('pixel-palette-select');
+  if (paletteSel) paletteSel.value = state.paletteKey;
+  const colorPicker = document.getElementById('pixel-color-picker');
+  if (colorPicker) colorPicker.value = state.color;
+  const alphaSlider = document.getElementById('pixel-alpha-slider');
+  const alphaVal = document.getElementById('pixel-alpha-val');
+  const alphaPct = Math.round((state.alpha / 255) * 100);
+  if (alphaSlider) alphaSlider.value = String(alphaPct);
+  if (alphaVal) alphaVal.textContent = `${alphaPct}%`;
   setTool('brush');
   renderPalette();
   renderRecentColors();
@@ -911,7 +928,7 @@ export function initImagesTab() {
   document.getElementById('pixel-fps-input')?.addEventListener('input', (e) => {
     state.fps = Math.max(1, Math.min(24, Number(e.target.value) || 6));
     const lbl = document.getElementById('pixel-fps-val');
-    if (lbl) lbl.textContent = `${state.fps} FPS`;
+    if (lbl) lbl.textContent = String(state.fps);
     if (state.playing) {
       stopPlayback();
       togglePlayback();
@@ -1032,4 +1049,31 @@ export function initImagesTab() {
     canvas.addEventListener('touchmove', moveDraw, { passive: false });
     window.addEventListener('touchend', endDraw);
   }
+
+  // Pixel Art Studio keyboard shortcuts (only active while #image-modal is open & not typing in an input)
+  document.addEventListener('keydown', (e) => {
+    const modal = document.getElementById('image-modal');
+    if (!modal || modal.style.display === 'none') return;
+    if (document.querySelector('.cc-confirm-overlay')) return;
+    const tag = (document.activeElement?.tagName || '').toLowerCase();
+    if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+
+    const k = e.key.toLowerCase();
+    if ((e.ctrlKey || e.metaKey) && k === 'z') {
+      e.preventDefault();
+      if (e.shiftKey) redo(); else undo();
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && k === 'y') {
+      e.preventDefault();
+      redo();
+      return;
+    }
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (k === 'b') { e.preventDefault(); setTool('brush'); }
+    else if (k === 'e') { e.preventDefault(); setTool('eraser'); }
+    else if (k === 'g') { e.preventDefault(); setTool('bucket'); }
+    else if (k === 'i') { e.preventDefault(); setTool('eyedropper'); }
+    else if (k === 'l') { e.preventDefault(); setTool('line'); }
+  });
 }

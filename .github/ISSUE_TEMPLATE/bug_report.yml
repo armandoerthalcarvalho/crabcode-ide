@@ -1,0 +1,52 @@
+name: Reportar Bug
+description: Relate um erro no motor CrabCode, tutorial, documentação, bibliotecas ou interface.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Descrição do problema
+      description: Explique claramente o que deu errado.
+    validations:
+      required: true
+
+  - type: textarea
+    id: code
+    attributes:
+      label: Código CrabCode (se aplicável)
+      description: Cole o código que reproduz o comportamento inesperado.
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Passos para reproduzir
+      placeholder: |
+        1. Abrir a aba...
+        2. Digitar / clicar em...
+        3. Observar o erro...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Comportamento esperado
+    validations:
+      required: true
+
+  - type: dropdown
+    id: browser
+    attributes:
+      label: Navegador
+      options:
+        - Google Chrome / Chromium
+        - Mozilla Firefox
+        - Microsoft Edge
+        - Safari
+        - Outro
+    validations:
+      required: true

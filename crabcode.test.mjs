@@ -579,3 +579,78 @@ test('All 12 curated pixel-art presets & 4 palettes have valid structure', () =>
     }
   }
 });
+
+// ==================== 9. INTERFACE REACTIVITY, DYNAMIC RGB & SPRITE RADIUS ====================
+test('Interface mode recomputes derived variables when stateful controls change while preserving stateful counters', async () => {
+  const code = `importe interface
+defina pontos como 0
+defina intensidade como funcao() slider("Intensidade", 10, 100)
+defina turbo como funcao() toggle("Modo Turbo (2.5x)")
+defina ganho como rodar(execute 25 se turbo.valor senao 10)
+defina energia como pontos + intensidade.valor * 2
+defina ganhar como funcao() botao("Ganhar Pontos") altere pontos para pontos + 25 se turbo.valor senao pontos + 10
+apresente "Pontos: " + pontos em texto ajuste centro m
+apresente "Energia: " + energia em destaque ajuste centro g
+apresente ganhar em botao ajuste centro m
+apresente intensidade em slider ajuste centro m
+apresente turbo em toggle ajuste centro m`;
+
+  const shared = { __ccState: {}, __ccElements: {}, __ccSprites: {}, __ccLastEvent: null };
+
+  // Pass 1: default state (pontos=0, intensidade=10, turbo=false => energia=20)
+  const r1 = await compileAndRun(code, { extraGlobal: shared });
+  assert.deepEqual(r1.compileErrors, []);
+  assert.equal(r1.runtimeError, null);
+  assert.equal(r1.interfaceMode, true);
+  assert.equal(r1.output.find(i => String(i.value).startsWith('Energia:')).value, 'Energia: 20');
+
+  // Pass 2: user toggles turbo ON and drags slider intensidade to 90 => energia must recompute to 180!
+  shared.__ccElements.turbo.valor = true;
+  shared.__ccElements.intensidade.valor = 90;
+  const r2 = await compileAndRun(code, { extraGlobal: shared });
+  assert.equal(r2.output.find(i => String(i.value).startsWith('Energia:')).value, 'Energia: 180');
+
+  // Pass 3: user clicks "Ganhar Pontos" button (with turbo ON -> +25 pts => pontos=25, energia=205)
+  shared.__ccLastEvent = { eventType: 'click', key: 'ganhar' };
+  const r3 = await compileAndRun(code, { extraGlobal: shared });
+  assert.equal(shared.__ccState.pontos, 25);
+  assert.equal(r3.output.find(i => String(i.value).startsWith('Pontos:')).value, 'Pontos: 25');
+  assert.equal(r3.output.find(i => String(i.value).startsWith('Energia:')).value, 'Energia: 205');
+});
+
+test('Dynamic RGB expressions and dynamic sprite curvo(radius) evaluate & clamp cleanly at runtime', async () => {
+  const code = `importe interface
+defina nivel como funcao() slider("Brilho", 0, 100)
+defina tom como nivel.valor * 2
+execute cor de fundo tom (tom + 10) 240
+execute cor de texto 15 23 42 se nivel.valor >= 50 senao 241 245 249
+defina orbe como sprite curvo(15 + nivel.valor / 2) com cor (150 + nivel.valor) 115 249
+apresente nivel em slider ajuste centro m
+apresente orbe em sprite ajuste centro m`;
+
+  const shared = { __ccState: {}, __ccElements: { nivel: { valor: 60 } }, __ccSprites: {}, __ccLastEvent: null };
+  const res = await compileAndRun(code, { extraGlobal: shared });
+  assert.deepEqual(res.compileErrors, []);
+  assert.equal(res.runtimeError, null);
+
+  const bg = res.output.find(i => i.type === 'corDeFundo');
+  assert.deepEqual({ r: bg.r, g: bg.g, b: bg.b }, { r: 120, g: 130, b: 240 });
+
+  const fg = res.output.find(i => i.type === 'corDeTexto');
+  assert.deepEqual({ r: fg.r, g: fg.g, b: fg.b }, { r: 15, g: 23, b: 42 });
+
+  const spr = shared.__ccSprites.orbe;
+  assert.equal(spr.kind, 'curvo');
+  assert.equal(spr.radius, 45);
+  assert.deepEqual(spr.color, { r: 210, g: 115, b: 249 });
+});
+
+test('Static RGB literal outside 0..255 still triggers E_RGB_RANGE error', () => {
+  const code = `importe interface\nexecute cor de fundo 300 0 0`;
+  const lexer = new Lexer(code, { registry: CrabLibRegistry, csvDatasets: [] });
+  const { tokens } = lexer.tokenize();
+  const parser = new Parser(tokens, new Set(lexer.declaredVars), new Set(lexer.declaredArrays), new Set(lexer.declaredObjects), { registry: CrabLibRegistry, csvDatasets: [] });
+  const { errors } = parser.parse();
+  assert.ok(errors.some(e => e.code === 'E_RGB_RANGE'), `Expected E_RGB_RANGE, got: ${JSON.stringify(errors)}`);
+});
+

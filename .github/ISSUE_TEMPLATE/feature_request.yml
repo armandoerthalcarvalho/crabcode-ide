@@ -1,0 +1,28 @@
+name: Sugestão de Melhoria
+description: Proponha um novo recurso para a linguagem, bibliotecas STEM, estúdio pixel art ou IDE.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Qual problema ou necessidade isso resolve?
+      description: Explique o contexto pedagógico ou técnico da sugestão.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Solução proposta
+      description: Descreva a sintaxe, biblioteca ou melhoria de interface imaginada.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: constraints
+    attributes:
+      label: Compatibilidade com o projeto
+      options:
+        - label: Entendo que o CrabCode IDE é mantido em HTML5, CSS3 e JavaScript Vanilla (sem frameworks/bundlers).
+          required: true

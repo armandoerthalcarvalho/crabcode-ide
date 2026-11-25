@@ -98,8 +98,9 @@ execute base * altura / 2`
         code: `defina nome como "Ada"
 defina pontuacao como 10
 altere pontuacao para pontuacao + 25
-defina aprovada como verdadeiro
-apresente nome + " fez " + pontuacao + " pontos." em destaque`
+defina aprovada como pontuacao >= 30
+apresente nome + " fez " + pontuacao + " pontos." em destaque
+apresente rodar(execute "Status: Aprovada" se aprovada senao "Status: Em progresso") em apresentacao`
       }
     ]
   },
@@ -360,18 +361,18 @@ apresente medicoes em estatisticas`
       {
         title: 'Mini-app reativo com botão, slider, toggle e sprite',
         code: `importe interface
-execute cor de fundo 15 23 42
-execute cor de texto 241 245 249
-
 defina pontos como 0
 defina nivel como funcao slider("Multiplicador", 1, 5)
-defina ativo como funcao toggle("Modo Bônus")
-defina somar como funcao botao("Ganhar Pontos") altere pontos para pontos + nivel.valor
+defina ativo como funcao toggle("Modo Bônus (2x)")
+execute cor de fundo 49 46 129 se ativo.valor senao 15 23 42
+execute cor de texto 241 245 249
+defina ganho como rodar(execute nivel.valor * 2 se ativo.valor senao nivel.valor)
+defina somar como funcao botao("Ganhar Pontos") altere pontos para pontos + nivel.valor * 2 se ativo.valor senao pontos + nivel.valor
 defina estrela como sprite reto(50,5, 61,38, 95,38, 68,58, 79,92, 50,72, 21,92, 32,58, 5,38, 39,38) com cor 250 204 21
 
 apresente "Painel Reativo" em destaque ajuste centro g
 apresente estrela em sprite ajuste centro p
-apresente "Pontos: " + pontos em apresentacao ajuste centro m
+apresente "Pontos: " + pontos + " (+" + ganho + " por clique)" em apresentacao ajuste centro g
 apresente somar em botao ajuste centro m
 apresente nivel em slider ajuste centro m
 apresente ativo em toggle ajuste centro m`

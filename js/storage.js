@@ -539,7 +539,7 @@ function openCsvModal(existingKey) {
   }
 
   if (preview) preview.textContent = '';
-  if (auditEl) { auditEl.innerHTML = ''; auditEl.style.display = 'none'; }
+  if (auditEl) { auditEl.innerHTML = ''; auditEl.className = 'csv-modal-audit'; auditEl.style.display = 'none'; }
   if (tablePreview) tablePreview.innerHTML = '';
   modal.style.display = 'flex';
 
@@ -559,7 +559,7 @@ function updateCsvPreview() {
   const tablePreview = document.getElementById('csv-modal-table-preview');
   if (!raw.trim()) {
     if (preview) preview.textContent = '';
-    if (auditEl) { auditEl.innerHTML = ''; auditEl.style.display = 'none'; }
+    if (auditEl) { auditEl.innerHTML = ''; auditEl.className = 'csv-modal-audit'; auditEl.style.display = 'none'; }
     if (tablePreview) tablePreview.innerHTML = '';
     return;
   }
@@ -570,7 +570,7 @@ function updateCsvPreview() {
       preview.textContent = '⚠ ' + result.error;
       preview.style.color = 'var(--color-vermelho)';
     }
-    if (auditEl) { auditEl.innerHTML = ''; auditEl.style.display = 'none'; }
+    if (auditEl) { auditEl.innerHTML = ''; auditEl.className = 'csv-modal-audit'; auditEl.style.display = 'none'; }
     if (tablePreview) tablePreview.innerHTML = '';
     return;
   }
@@ -602,9 +602,11 @@ function updateCsvPreview() {
       notes.push(`Dataset truncado em ${CSV_MAX_ROWS.toLocaleString('pt-BR')} linhas (${result.audit.truncatedRows} ignoradas)`);
     }
     if (notes.length > 0) {
+      auditEl.className = 'csv-modal-audit csv-audit-warn';
       auditEl.style.display = 'block';
       auditEl.innerHTML = `<strong>Auditoria de qualidade:</strong> ${notes.map(n => escapeHtml(n)).join(' · ')}`;
     } else {
+      auditEl.className = 'csv-modal-audit';
       auditEl.innerHTML = '';
       auditEl.style.display = 'none';
     }

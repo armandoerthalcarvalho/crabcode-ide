@@ -796,6 +796,66 @@ class Parser {
     return true;
   }
 
+  // Parse 3 RGB channels where each channel can be a number literal (0..255),
+  // an identifier / member access (e.g. r.valor), or a parenthesized expression ((brilho.valor * 2)).
+  _parseRgbChannels(slice, token, label) {
+    const channels = [];
+    let k = 0;
+    while (k < slice.length) {
+      const t = slice[k];
+      if (t.type === 'COR_DE_FUNDO' || t.type === 'COR_DE_TEXTO' || t.type === 'VIRGULA') {
+        k++;
+        continue;
+      }
+      if (t.type === 'PAREN' && t.value === '(') {
+        let depth = 0;
+        const start = k;
+        while (k < slice.length) {
+          if (slice[k].type === 'PAREN' && slice[k].value === '(') depth++;
+          else if (slice[k].type === 'PAREN' && slice[k].value === ')') {
+            depth--;
+            if (depth === 0) { k++; break; }
+          }
+          k++;
+        }
+        channels.push({ tokens: slice.slice(start, k) });
+      } else if (t.type === 'OPERATOR' && t.value === '-' && slice[k + 1]?.type === 'NUMBER') {
+        channels.push({ lit: -Number(slice[k + 1].value) });
+        k += 2;
+      } else if (t.type === 'NUMBER') {
+        channels.push({ lit: Number(t.value) });
+        k++;
+      } else if (t.type === 'IDENTIFIER') {
+        const start = k;
+        k++;
+        while (k + 1 < slice.length && slice[k].type === 'PONTO') {
+          k += 2;
+        }
+        channels.push({ tokens: slice.slice(start, k) });
+      } else {
+        k++;
+      }
+    }
+
+    if (channels.length !== 3) {
+      this._addDiag(`'${label}' exige exatamente 3 valores RGB entre 0 e 255. Ex: ${label} 15 23 42`, token, 'E_RGB_ARGS');
+      return null;
+    }
+
+    let ok = true;
+    for (const ch of channels) {
+      if (ch.lit !== undefined) {
+        if (!Number.isFinite(ch.lit) || ch.lit < 0 || ch.lit > 255) {
+          this._addDiag(`Valor RGB inválido (${ch.lit}) em '${label}'. Use números entre 0 e 255.`, token, 'E_RGB_RANGE');
+          ok = false;
+        }
+      } else if (ch.tokens) {
+        this.validateExpr(ch.tokens, label);
+      }
+    }
+    return ok ? { r: channels[0], g: channels[1], b: channels[2] } : null;
+  }
+
   _extractJsArity(jsCode) {
     if (!jsCode) return;
     const fnRe = /function\s+([a-zA-ZÀ-ÿ_][a-zA-ZÀ-ÿ0-9_]*)\s*\(([^)]*)\)\s*\{/g;
@@ -1472,21 +1532,11 @@ class Parser {
         this._addDiag(`'sprite' precisa de 'reto(...)' ou 'curvo(r)' ou o nome de uma imagem`, tokens[3], 'E_SPRITE_SYNTAX');
         return;
       }
-      // Helper: parse optional 'com cor R G B' at end of sprite declaration
+      // Helper: parse optional 'com cor R G B' at end of sprite declaration (supports literals & expressions)
       const parseSpriteColor = (startIdx) => {
         const corIdx = tokens.findIndex((t, idx) => idx >= startIdx && t.type === 'COR_AMARELO');
         if (corIdx === -1) return null;
-        const cNums = [];
-        for (let ci = corIdx + 1; ci < tokens.length && cNums.length < 3; ci++) {
-          if (tokens[ci].type === 'OPERATOR' && tokens[ci].value === '-' && tokens[ci + 1]?.type === 'NUMBER') {
-            cNums.push(-Number(tokens[ci + 1].value));
-            ci++;
-          } else if (tokens[ci].type === 'NUMBER') {
-            cNums.push(Number(tokens[ci].value));
-          }
-        }
-        if (!this._validateRgbNumbers(cNums, tokens[corIdx], 'com cor')) return null;
-        return { r: cNums[0], g: cNums[1], b: cNums[2] };
+        return this._parseRgbChannels(tokens.slice(corIdx + 1), tokens[corIdx], 'com cor');
       };
       if (spriteKindToken.type === 'RETO') {
         const parenOpen = tokens[5];
@@ -1519,14 +1569,34 @@ class Parser {
           this._addDiag(`'sprite curvo' precisa de um raio. Ex: sprite curvo(25)`, spriteKindToken, 'E_SPRITE_SYNTAX');
           return;
         }
-        const rToken = tokens[6];
-        const radius = rToken && rToken.type === 'NUMBER' ? Number(rToken.value) : 5;
-        if (radius <= 0) {
-          this._addDiag(`O raio em 'sprite curvo' deve ser maior que zero.`, rToken || spriteKindToken, 'E_SPRITE_SYNTAX');
+        let closeIdx = -1;
+        let depth = 0;
+        for (let ci = 5; ci < tokens.length; ci++) {
+          if (tokens[ci].type === 'PAREN' && tokens[ci].value === '(') depth++;
+          else if (tokens[ci].type === 'PAREN' && tokens[ci].value === ')') {
+            depth--;
+            if (depth === 0) { closeIdx = ci; break; }
+          }
         }
-        const closeIdx = tokens.findIndex((t, idx) => idx >= 6 && t.type === 'PAREN' && t.value === ')');
+        const radiusTokens = closeIdx > 6 ? tokens.slice(6, closeIdx) : [];
+        let radius = 25;
+        let radiusExprTokens = null;
+        if (radiusTokens.length === 1 && radiusTokens[0].type === 'NUMBER') {
+          radius = Number(radiusTokens[0].value);
+          if (radius <= 0) {
+            this._addDiag(`O raio em 'sprite curvo' deve ser maior que zero.`, radiusTokens[0], 'E_SPRITE_SYNTAX');
+          }
+        } else if (radiusTokens.length === 2 && radiusTokens[0].type === 'OPERATOR' && radiusTokens[0].value === '-' && radiusTokens[1].type === 'NUMBER') {
+          radius = -Number(radiusTokens[1].value);
+          this._addDiag(`O raio em 'sprite curvo' deve ser maior que zero.`, radiusTokens[1], 'E_SPRITE_SYNTAX');
+        } else if (radiusTokens.length > 0) {
+          this.validateExpr(radiusTokens, 'sprite curvo');
+          radiusExprTokens = radiusTokens;
+        } else {
+          this._addDiag(`'sprite curvo' precisa de um raio positivo. Ex: sprite curvo(25)`, spriteKindToken, 'E_SPRITE_SYNTAX');
+        }
         const color = parseSpriteColor(closeIdx !== -1 ? closeIdx + 1 : 7);
-        this.ast.push({ type: 'DefineSpriteCircle', name: nameToken.value, radius, color, line: tokens[0].line });
+        this.ast.push({ type: 'DefineSpriteCircle', name: nameToken.value, radius, radiusExprTokens, color, line: tokens[0].line });
       } else if (spriteKindToken.type === 'IDENTIFIER' || spriteKindToken.type === 'STRING') {
         const imgKey = spriteKindToken.value;
         if (this._savedSprites) {
@@ -1780,45 +1850,26 @@ class Parser {
         return;
       }
       const seIdxBg = tokens.findIndex((t, idx) => idx >= 2 && t.type === 'SE');
-      const parseSignedNums = (slice) => {
-        const res = [];
-        for (let k = 0; k < slice.length; k++) {
-          if (slice[k].type === 'OPERATOR' && slice[k].value === '-' && slice[k + 1]?.type === 'NUMBER') {
-            res.push(-Number(slice[k + 1].value));
-            k++;
-          } else if (slice[k].type === 'NUMBER') {
-            res.push(Number(slice[k].value));
-          }
-        }
-        return res;
-      };
       if (seIdxBg !== -1) {
-        const nums = parseSignedNums(tokens.slice(2, seIdxBg));
-        this._validateRgbNumbers(nums, tokens[1], 'cor de fundo');
+        const rgb = this._parseRgbChannels(tokens.slice(2, seIdxBg), tokens[1], 'cor de fundo') || { r: { lit: 0 }, g: { lit: 0 }, b: { lit: 0 } };
         const afterSe = tokens.slice(seIdxBg + 1);
         const senaoIdxBg = afterSe.findIndex(t => t.type === 'SENAO');
         const condTokens = senaoIdxBg !== -1 ? afterSe.slice(0, senaoIdxBg) : afterSe;
         this.validateCond(condTokens, 'se');
-        const elseNums = senaoIdxBg !== -1 ? parseSignedNums(afterSe.slice(senaoIdxBg + 1)) : null;
-        if (elseNums) this._validateRgbNumbers(elseNums, afterSe[senaoIdxBg], 'senao cor de fundo');
+        const elseRgb = senaoIdxBg !== -1 ? this._parseRgbChannels(afterSe.slice(senaoIdxBg + 1), afterSe[senaoIdxBg], 'senao cor de fundo') : null;
         this.ast.push({
           type: 'ExecuteCorDeFundo',
-          r: nums[0] ?? 0,
-          g: nums[1] ?? 0,
-          b: nums[2] ?? 0,
+          r: rgb.r, g: rgb.g, b: rgb.b,
           condTokens,
-          elseRgb: elseNums && elseNums.length >= 3 ? { r: elseNums[0], g: elseNums[1], b: elseNums[2] } : null,
+          elseRgb,
           line: tokens[0].line
         });
         return;
       }
-      const nums = parseSignedNums(tokens.slice(2));
-      this._validateRgbNumbers(nums, tokens[1], 'cor de fundo');
+      const rgb = this._parseRgbChannels(tokens.slice(2), tokens[1], 'cor de fundo') || { r: { lit: 0 }, g: { lit: 0 }, b: { lit: 0 } };
       this.ast.push({
         type: 'ExecuteCorDeFundo',
-        r: nums[0] ?? 0,
-        g: nums[1] ?? 0,
-        b: nums[2] ?? 0,
+        r: rgb.r, g: rgb.g, b: rgb.b,
         line: tokens[0].line
       });
       return;
@@ -1830,46 +1881,27 @@ class Parser {
         this._addDiag(`'execute cor de texto' requer 'importe interface' no início do script.`, tokens[1], 'E_NEED_INTERFACE');
         return;
       }
-      const parseSignedNums = (slice) => {
-        const res = [];
-        for (let k = 0; k < slice.length; k++) {
-          if (slice[k].type === 'OPERATOR' && slice[k].value === '-' && slice[k + 1]?.type === 'NUMBER') {
-            res.push(-Number(slice[k + 1].value));
-            k++;
-          } else if (slice[k].type === 'NUMBER') {
-            res.push(Number(slice[k].value));
-          }
-        }
-        return res;
-      };
       const seIdxTxt = tokens.findIndex((t, idx) => idx >= 2 && t.type === 'SE');
       if (seIdxTxt !== -1) {
-        const nums = parseSignedNums(tokens.slice(2, seIdxTxt));
-        this._validateRgbNumbers(nums, tokens[1], 'cor de texto');
+        const rgb = this._parseRgbChannels(tokens.slice(2, seIdxTxt), tokens[1], 'cor de texto') || { r: { lit: 226 }, g: { lit: 232 }, b: { lit: 240 } };
         const afterSe = tokens.slice(seIdxTxt + 1);
         const senaoIdxTxt = afterSe.findIndex(t => t.type === 'SENAO');
         const condTokens = senaoIdxTxt !== -1 ? afterSe.slice(0, senaoIdxTxt) : afterSe;
         this.validateCond(condTokens, 'se');
-        const elseNums = senaoIdxTxt !== -1 ? parseSignedNums(afterSe.slice(senaoIdxTxt + 1)) : null;
-        if (elseNums) this._validateRgbNumbers(elseNums, afterSe[senaoIdxTxt], 'senao cor de texto');
+        const elseRgb = senaoIdxTxt !== -1 ? this._parseRgbChannels(afterSe.slice(senaoIdxTxt + 1), afterSe[senaoIdxTxt], 'senao cor de texto') : null;
         this.ast.push({
           type: 'ExecuteCorDeTexto',
-          r: nums[0] ?? 226,
-          g: nums[1] ?? 232,
-          b: nums[2] ?? 240,
+          r: rgb.r, g: rgb.g, b: rgb.b,
           condTokens,
-          elseRgb: elseNums && elseNums.length >= 3 ? { r: elseNums[0], g: elseNums[1], b: elseNums[2] } : null,
+          elseRgb,
           line: tokens[0].line
         });
         return;
       }
-      const nums = parseSignedNums(tokens.slice(2));
-      this._validateRgbNumbers(nums, tokens[1], 'cor de texto');
+      const rgb = this._parseRgbChannels(tokens.slice(2), tokens[1], 'cor de texto') || { r: { lit: 226 }, g: { lit: 232 }, b: { lit: 240 } };
       this.ast.push({
         type: 'ExecuteCorDeTexto',
-        r: nums[0] ?? 226,
-        g: nums[1] ?? 232,
-        b: nums[2] ?? 240,
+        r: rgb.r, g: rgb.g, b: rgb.b,
         line: tokens[0].line
       });
       return;
@@ -2658,12 +2690,35 @@ class Transpiler {
   transpile() {
     let jsLines = [];
 
-    // Detect interface mode in first pre-pass (before emitting output array declaration)
+    // Detect interface mode & collect stateful (mutated) variables in pre-pass
+    // Only variables mutated by altere / botao altere / carregue local persist across re-runs;
+    // derived variables (e.g. defina dobro como slider.valor * 2) recompute fresh every render!
     this._interfaceMode = this.ast.some(n => n.type === 'ImportLib' && n.libName === 'interface');
+    this._statefulVars = new Set();
+    if (this._interfaceMode) {
+      for (const n of this.ast) {
+        if (n.type === 'AlterVar' && n.name) {
+          this._statefulVars.add(n.name);
+        } else if (n.type === 'CarregueLocal' && Array.isArray(n.vars)) {
+          for (const v of n.vars) this._statefulVars.add(v);
+        } else if (n.type === 'DefineInteractive' && n.kind === 'botao' && Array.isArray(n.effectTokens)) {
+          if (n.effectTokens[0]?.type === 'ALTERE' && n.effectTokens[1]?.value) {
+            this._statefulVars.add(n.effectTokens[1].value);
+          }
+        } else if (n.type === 'DefineFunc' && Array.isArray(n.bodyTokens)) {
+          for (let bi = 0; bi < n.bodyTokens.length - 1; bi++) {
+            if (n.bodyTokens[bi].type === 'ALTERE' && n.bodyTokens[bi + 1]?.value) {
+              this._statefulVars.add(n.bodyTokens[bi + 1].value);
+            }
+          }
+        }
+      }
+    }
 
     if (this._interfaceMode) {
       jsLines.push('const __output = [];');
       jsLines.push('const __iface_output = [];');
+      jsLines.push('let __ccEventHandled = false;');
     } else {
       jsLines.push('const __output = [];');
     }
@@ -2719,10 +2774,18 @@ class Transpiler {
     }
 
     // Second pass: transpile
+    const importLines = [];
+    const bodyLines = [];
     for (const node of this.ast) {
       try {
         const js = this.transpileNode(node);
-        if (js) jsLines.push(js);
+        if (js) {
+          if (this._interfaceMode && node.type === 'ImportLib') {
+            importLines.push(js);
+          } else {
+            bodyLines.push(js);
+          }
+        }
       } catch (e) {
         this.errors.push({
           message: `Erro de transpilação na linha ${node.line}: ${e.message}`,
@@ -2731,7 +2794,20 @@ class Transpiler {
       }
     }
 
-    jsLines.push(this._interfaceMode ? 'return __iface_output;' : 'return __output;');
+    if (this._interfaceMode) {
+      jsLines.push(...importLines);
+      jsLines.push('async function __ccRenderPass() {');
+      jsLines.push('  __iface_output.length = 0;');
+      jsLines.push('  __output.length = 0;');
+      jsLines.push(...bodyLines);
+      jsLines.push('}');
+      jsLines.push('await __ccRenderPass();');
+      jsLines.push('if (__ccEventHandled) { __ccEventHandled = false; await __ccRenderPass(); }');
+      jsLines.push('return __iface_output;');
+    } else {
+      jsLines.push(...bodyLines);
+      jsLines.push('return __output;');
+    }
     return { code: jsLines.join('\n'), errors: this.errors };
   }
 
@@ -3192,8 +3268,12 @@ class Transpiler {
   transpileDefineVar(node) {
     const value = this.tokensToExpr(node.valueTokens);
     if (this._interfaceMode) {
-      // In interface mode, persist to __state so re-runs use the last value
-      return `if (__state[${JSON.stringify(node.name)}] === undefined) { __state[${JSON.stringify(node.name)}] = (${value}); }\nvar ${node.name} = __state[${JSON.stringify(node.name)}];`;
+      if (this._statefulVars && this._statefulVars.has(node.name)) {
+        // Persist mutated state variable across interface re-runs
+        return `if (__state[${JSON.stringify(node.name)}] === undefined) { __state[${JSON.stringify(node.name)}] = (${value}); }\nvar ${node.name} = __state[${JSON.stringify(node.name)}];`;
+      }
+      // Derived / computed variable: recompute fresh on every interaction
+      return `var ${node.name} = (${value});`;
     }
     return `let ${node.name} = ${value};`;
   }
@@ -3641,38 +3721,59 @@ class Transpiler {
   }
 
   // ==================== interface cor de fundo / cor de texto ====================
+  _rgbChJs(ch, fallback = 0) {
+    if (typeof ch === 'number') return String(ch);
+    if (ch && ch.lit !== undefined) return String(ch.lit);
+    if (ch && ch.tokens) {
+      return `Math.max(0, Math.min(255, Math.round(Number(${this.tokensToExpr(ch.tokens)}) || 0)))`;
+    }
+    return String(fallback);
+  }
+
+  _rgbObjJs(rgb, fallback = [0, 0, 0]) {
+    if (!rgb) return 'null';
+    return `{ r: ${this._rgbChJs(rgb.r, fallback[0])}, g: ${this._rgbChJs(rgb.g, fallback[1])}, b: ${this._rgbChJs(rgb.b, fallback[2])} }`;
+  }
+
   transpileExecuteCorDeFundo(node) {
+    const r = this._rgbChJs(node.r, 0), g = this._rgbChJs(node.g, 0), b = this._rgbChJs(node.b, 0);
     if (node.condTokens) {
       const cond = this.tokensToExpr(node.condTokens);
       if (node.elseRgb) {
-        return `if (${cond}) { __iface_output.push({ type: 'corDeFundo', r: ${node.r}, g: ${node.g}, b: ${node.b} }); } else { __iface_output.push({ type: 'corDeFundo', r: ${node.elseRgb.r}, g: ${node.elseRgb.g}, b: ${node.elseRgb.b} }); }`;
+        const er = this._rgbChJs(node.elseRgb.r, 0), eg = this._rgbChJs(node.elseRgb.g, 0), eb = this._rgbChJs(node.elseRgb.b, 0);
+        return `if (${cond}) { __iface_output.push({ type: 'corDeFundo', r: ${r}, g: ${g}, b: ${b} }); } else { __iface_output.push({ type: 'corDeFundo', r: ${er}, g: ${eg}, b: ${eb} }); }`;
       }
-      return `if (${cond}) { __iface_output.push({ type: 'corDeFundo', r: ${node.r}, g: ${node.g}, b: ${node.b} }); }`;
+      return `if (${cond}) { __iface_output.push({ type: 'corDeFundo', r: ${r}, g: ${g}, b: ${b} }); }`;
     }
-    return `__iface_output.push({ type: 'corDeFundo', r: ${node.r}, g: ${node.g}, b: ${node.b} });`;
+    return `__iface_output.push({ type: 'corDeFundo', r: ${r}, g: ${g}, b: ${b} });`;
   }
 
   transpileExecuteCorDeTexto(node) {
+    const r = this._rgbChJs(node.r, 226), g = this._rgbChJs(node.g, 232), b = this._rgbChJs(node.b, 240);
     if (node.condTokens) {
       const cond = this.tokensToExpr(node.condTokens);
       if (node.elseRgb) {
-        return `if (${cond}) { __iface_output.push({ type: 'corDeTexto', r: ${node.r}, g: ${node.g}, b: ${node.b} }); } else { __iface_output.push({ type: 'corDeTexto', r: ${node.elseRgb.r}, g: ${node.elseRgb.g}, b: ${node.elseRgb.b} }); }`;
+        const er = this._rgbChJs(node.elseRgb.r, 226), eg = this._rgbChJs(node.elseRgb.g, 232), eb = this._rgbChJs(node.elseRgb.b, 240);
+        return `if (${cond}) { __iface_output.push({ type: 'corDeTexto', r: ${r}, g: ${g}, b: ${b} }); } else { __iface_output.push({ type: 'corDeTexto', r: ${er}, g: ${eg}, b: ${eb} }); }`;
       }
-      return `if (${cond}) { __iface_output.push({ type: 'corDeTexto', r: ${node.r}, g: ${node.g}, b: ${node.b} }); }`;
+      return `if (${cond}) { __iface_output.push({ type: 'corDeTexto', r: ${r}, g: ${g}, b: ${b} }); }`;
     }
-    return `__iface_output.push({ type: 'corDeTexto', r: ${node.r}, g: ${node.g}, b: ${node.b} });`;
+    return `__iface_output.push({ type: 'corDeTexto', r: ${r}, g: ${g}, b: ${b} });`;
   }
 
   // ==================== sprites ====================
   transpileDefineSpriteReto(node) {
     const points = JSON.stringify(node.points);
-    const color = JSON.stringify(node.color || null);
+    const color = this._rgbObjJs(node.color);
     return `if (!window.parent.__ccSprites) window.parent.__ccSprites = {};\nwindow.parent.__ccSprites[${JSON.stringify(node.name)}] = { kind: 'reto', points: ${points}, color: ${color} };\nvar ${node.name} = ${JSON.stringify(node.name)};`;
   }
 
   transpileDefineSpriteCircle(node) {
-    const color = JSON.stringify(node.color || null);
-    return `if (!window.parent.__ccSprites) window.parent.__ccSprites = {};\nwindow.parent.__ccSprites[${JSON.stringify(node.name)}] = { kind: 'curvo', radius: ${node.radius}, color: ${color} };\nvar ${node.name} = ${JSON.stringify(node.name)};`;
+    const color = this._rgbObjJs(node.color);
+    const radiusJs = node.radiusExprTokens
+      ? `Math.max(4, Math.min(180, Number(${this.tokensToExpr(node.radiusExprTokens)}) || 25))`
+      : String(node.radius);
+    return `if (!window.parent.__ccSprites) window.parent.__ccSprites = {};\nwindow.parent.__ccSprites[${JSON.stringify(node.name)}] = { kind: 'curvo', radius: ${radiusJs}, color: ${color} };\nvar ${node.name} = ${JSON.stringify(node.name)};`;
   }
 
   transpileDefineSpriteImage(node) {
@@ -3729,7 +3830,7 @@ class Transpiler {
         actionJs = `${node.name}.valor = (${effExpr});`;
       }
       lines.push(
-        `if (window.parent.__ccLastEvent && window.parent.__ccLastEvent.eventType === 'click' && window.parent.__ccLastEvent.key === ${key}) { ${actionJs} window.parent.__ccLastEvent = null; }`
+        `if (window.parent.__ccLastEvent && window.parent.__ccLastEvent.eventType === 'click' && window.parent.__ccLastEvent.key === ${key}) { ${actionJs} window.parent.__ccLastEvent = null; __ccEventHandled = true; }`
       );
     }
 
