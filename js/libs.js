@@ -116,6 +116,74 @@ function renderLibs() {
     return;
   }
 
+const SELO_EXPLANATIONS = {
+  estrelada: 'Nível máximo: núcleo essencial de altíssimo impacto e uso frequente no CrabCode.',
+  honrosa: 'Alto nível técnico: funções avançadas de engenharia, dados, ciências ou finanças.',
+  recomendada: 'Essencial no dia a dia: utilitários diretos, confiáveis e amplamente aplicáveis.',
+  meta: 'Meta-biblioteca agregadora: importa várias sub-bibliotecas relacionadas com um único comando.',
+};
+
+function buildLibDetailedDocsHtml(lib) {
+  const resolvedFns = lib.dependencies
+    ? lib.dependencies.flatMap(depKey => {
+        const dep = CrabLibRegistry.get(depKey);
+        return (dep?.functions || []).map(f => ({ ...f, _from: depKey }));
+      })
+    : (lib.functions || []);
+
+  const seloNote = lib.selo ? SELO_EXPLANATIONS[lib.selo] || '' : 'Biblioteca personalizada criada localmente pelo usuário.';
+  const isBuiltinInterface = lib.key === 'interface';
+
+  const rowsHtml = resolvedFns.map(f => {
+    const callSample = isBuiltinInterface
+      ? f.name
+      : `${f.name}(${f.params || ''})`;
+    const originTag = f._from ? `<span class="lib-doc-origin">${escapeHtml(f._from)}</span>` : '';
+    const copySnippet = isBuiltinInterface
+      ? f.name
+      : `execute ${f.name}(${f.params || ''})`;
+    return `
+      <tr>
+        <td class="lib-doc-fn-cell"><code>${escapeHtml(callSample)}</code>${originTag}</td>
+        <td><code>${escapeHtml(f.params || '—')}</code></td>
+        <td>${escapeHtml(f.desc || 'Função disponível após importação.')}</td>
+        <td class="lib-doc-copy-cell">
+          <button type="button" class="btn btn-xs" data-copy-call="${escapeHtml(copySnippet)}">Copiar</button>
+        </td>
+      </tr>`;
+  }).join('');
+
+  const usageNote = isBuiltinInterface
+    ? `Ativa o modo visual interativo. Toda saída passa para o canvas da interface com suporte a <code>ajuste</code>, <code>grid</code>, controles interativos (<code>botao</code>, <code>toggle</code>, <code>slider</code>, <code>seletor</code>, <code>digite</code>, <code>pergunte</code>), sprites e persistência local (<code>salve local</code> / <code>carregue local</code>).`
+    : `Para exibir diretamente o retorno, use <code>execute nome_funcao(...)</code>. Para guardar o retorno em uma variável ou concatenar em <code>apresente</code>, envolva em <code>rodar(execute nome_funcao(...))</code>.`;
+
+  return `
+    <div class="lib-detail-drawer" style="display:none">
+      <div class="lib-detail-meta-box">
+        <div><strong>Importação:</strong> <code>importe ${escapeHtml(lib.key)}</code></div>
+        <div><strong>Categoria:</strong> ${escapeHtml(lib.category || 'Personalizadas')} · <strong>Total de funções:</strong> ${resolvedFns.length}</div>
+        <div class="lib-detail-selo-note">${escapeHtml(seloNote)}</div>
+        <div class="lib-detail-tip">${usageNote}</div>
+      </div>
+      ${resolvedFns.length > 0 ? `
+        <div class="lib-detail-table-wrap">
+          <table class="lib-detail-table">
+            <thead>
+              <tr>
+                <th>Assinatura</th>
+                <th>Parâmetros</th>
+                <th>Descrição / Fórmula</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>${rowsHtml}</tbody>
+          </table>
+        </div>
+      ` : '<p class="lib-detail-empty">Esta biblioteca não declara funções individuais.</p>'}
+    </div>
+  `;
+}
+
   list.innerHTML = '';
   for (const lib of entries) {
     const isCustom = !CrabLibRegistry.official[lib.key];
@@ -130,9 +198,16 @@ function renderLibs() {
 
     const catText = lib.category ? `<span class="lib-cat-meta">${escapeHtml(lib.category)}</span>` : '';
 
-    const funcsHtml = (lib.functions || []).map(f =>
+    const resolvedCount = lib.dependencies
+      ? lib.dependencies.reduce((acc, dk) => acc + ((CrabLibRegistry.get(dk)?.functions || []).length), 0)
+      : (lib.functions || []).length;
+
+    const funcsPreview = (lib.functions || []).slice(0, 8).map(f =>
       `<span class="lib-func" title="${escapeHtml(f.desc || '')}">${escapeHtml(f.name)}(${escapeHtml(f.params || '')})</span>`
     ).join('');
+    const moreFns = (lib.functions || []).length > 8
+      ? `<span class="lib-func lib-func-more">+${lib.functions.length - 8} na doc completa</span>`
+      : '';
 
     const exampleLines = (lib.example || '').split('\n');
     const exampleHtml = exampleLines.map(line =>
@@ -150,10 +225,10 @@ function renderLibs() {
       <p class="lib-card-desc">${escapeHtml(lib.description)}</p>
       <div class="lib-card-submeta">
         ${catText}
-        ${(lib.functions && lib.functions.length) ? `<span>${lib.functions.length} funções</span>` : ''}
-        ${lib.dependencies ? `<span>Agrupa ${lib.dependencies.length} bibliotecas</span>` : ''}
+        <span>${resolvedCount} ${resolvedCount === 1 ? 'função' : 'funções'}</span>
+        ${lib.dependencies ? `<span>Agrupa ${lib.dependencies.length} sub-bibliotecas</span>` : ''}
       </div>
-      ${funcsHtml ? `<div class="lib-func-list">${funcsHtml}</div>` : ''}
+      ${funcsPreview ? `<div class="lib-func-list">${funcsPreview}${moreFns}</div>` : ''}
       ${lib.dependencies ? `<div class="lib-deps-line">Inclui: <code>${escapeHtml(lib.dependencies.join(', '))}</code></div>` : ''}
       ${lib.example ? `
         <div class="lib-card-example">
@@ -163,15 +238,31 @@ function renderLibs() {
       ` : ''}
       <div class="lib-card-actions">
         ${lib.example ? `<button type="button" class="btn btn-sm btn-accent-soft" data-action="try">▶ Testar no Editor</button>` : ''}
+        <button type="button" class="btn btn-sm" data-action="toggle-docs" aria-expanded="false">Doc. Detalhada</button>
         <button type="button" class="btn btn-sm" data-action="copy-import">Copiar importe</button>
         ${lib.example ? `<button type="button" class="btn btn-sm" data-action="copy-example">Copiar exemplo</button>` : ''}
         ${isCustom ? `<button type="button" class="btn btn-sm" data-action="edit">Editar</button>` : ''}
         ${isCustom ? `<button type="button" class="btn btn-sm btn-danger-ghost" data-action="delete">Excluir</button>` : ''}
       </div>
+      ${buildLibDetailedDocsHtml(lib)}
     `;
 
     card.querySelector('[data-action="try"]')?.addEventListener('click', () => {
       if (typeof window.tryInEditor === 'function') window.tryInEditor(lib.example, true);
+    });
+    const docsBtn = card.querySelector('[data-action="toggle-docs"]');
+    const drawer = card.querySelector('.lib-detail-drawer');
+    docsBtn?.addEventListener('click', () => {
+      const open = drawer.style.display !== 'none';
+      drawer.style.display = open ? 'none' : 'block';
+      docsBtn.setAttribute('aria-expanded', String(!open));
+      docsBtn.textContent = open ? 'Doc. Detalhada' : 'Ocultar Doc.';
+    });
+    drawer?.querySelectorAll('[data-copy-call]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        await copyText(btn.dataset.copyCall);
+        showToast('Chamada copiada!', 'success', 1400);
+      });
     });
     card.querySelector('[data-action="copy-import"]')?.addEventListener('click', (e) => {
       copyLibImport(lib.key, e.currentTarget);

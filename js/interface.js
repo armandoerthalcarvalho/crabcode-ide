@@ -7,9 +7,16 @@ class InterfaceRenderer {
   constructor(container) {
     this._container = container;
     this._itemCount = 0;
+    this._spriteTimers = [];
+  }
+
+  _clearSpriteTimers() {
+    for (const id of this._spriteTimers) clearInterval(id);
+    this._spriteTimers = [];
   }
 
   render(outputItems, bgColor = null) {
+    this._clearSpriteTimers();
     this._container.innerHTML = '';
     this._itemCount = 0;
 
@@ -64,6 +71,7 @@ class InterfaceRenderer {
   }
 
   teardown() {
+    this._clearSpriteTimers();
     if (this._keydownHandler) {
       window.removeEventListener('keydown', this._keydownHandler);
       window.removeEventListener('keyup', this._keyupHandler);
@@ -259,7 +267,7 @@ class InterfaceRenderer {
     } else if (def.kind === 'curvo') {
       el.innerHTML = this._buildCircleSVG(color);
     } else if (def.kind === 'image') {
-      el.innerHTML = this._buildImageHTML(def.imageKey);
+      this._mountImageSprite(el, def.imageKey);
     }
 
     this._itemCount++;
@@ -284,7 +292,28 @@ class InterfaceRenderer {
     return `<svg viewBox="0 0 100 100" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg"><circle cx="50" cy="50" r="46" fill="${color}" /></svg>`;
   }
 
-  _buildImageHTML(imageKey) {
+  _renderFrameToDataUrl(pixels, size) {
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    const imageData = ctx.createImageData(size, size);
+    for (let i = 0; i < pixels.length; i++) {
+      const px = pixels[i];
+      if (Array.isArray(px)) {
+        imageData.data[i * 4]     = px[0];
+        imageData.data[i * 4 + 1] = px[1];
+        imageData.data[i * 4 + 2] = px[2];
+        imageData.data[i * 4 + 3] = px[3];
+      } else {
+        imageData.data[i] = px;
+      }
+    }
+    ctx.putImageData(imageData, 0, 0);
+    return canvas.toDataURL('image/png');
+  }
+
+  _mountImageSprite(containerEl, imageKey) {
     try {
       let img = window.__ccImages && window.__ccImages[imageKey];
       if (!img) {
@@ -295,31 +324,33 @@ class InterfaceRenderer {
         }
       }
       if (!img) {
-        return `<div class="iface-sprite-missing">Sprite "${String(imageKey).replace(/[<>&"]/g, '')}" não encontrado</div>`;
+        containerEl.innerHTML = `<div class="iface-sprite-missing">Sprite "${String(imageKey).replace(/[<>&"]/g, '')}" não encontrado</div>`;
+        return;
       }
       const size = img.size || 16;
-      const canvas = document.createElement('canvas');
-      canvas.width = size;
-      canvas.height = size;
-      const ctx = canvas.getContext('2d');
-      const imageData = ctx.createImageData(size, size);
-      const pixels = img.pixels || img.data || [];
-      for (let i = 0; i < pixels.length; i++) {
-        const px = pixels[i];
-        if (Array.isArray(px)) {
-          imageData.data[i * 4]     = px[0];
-          imageData.data[i * 4 + 1] = px[1];
-          imageData.data[i * 4 + 2] = px[2];
-          imageData.data[i * 4 + 3] = px[3];
-        } else {
-          imageData.data[i] = px;
-        }
+      const frames = Array.isArray(img.frames) && img.frames.length > 0
+        ? img.frames
+        : [img.pixels || img.data || []];
+      const dataUrls = frames.map(f => this._renderFrameToDataUrl(f, size));
+
+      const imgEl = document.createElement('img');
+      imgEl.src = dataUrls[0];
+      imgEl.alt = String(imageKey).replace(/[<>&"]/g, '');
+      imgEl.style.cssText = 'width:100%;height:100%;image-rendering:pixelated;object-fit:contain;display:block;';
+      containerEl.innerHTML = '';
+      containerEl.appendChild(imgEl);
+
+      if (dataUrls.length > 1) {
+        const fps = Math.max(1, Math.min(24, Number(img.fps) || 6));
+        let idx = 0;
+        const timerId = setInterval(() => {
+          idx = (idx + 1) % dataUrls.length;
+          imgEl.src = dataUrls[idx];
+        }, Math.round(1000 / fps));
+        this._spriteTimers.push(timerId);
       }
-      ctx.putImageData(imageData, 0, 0);
-      const dataUrl = canvas.toDataURL('image/png');
-      return `<img src="${dataUrl}" alt="${String(imageKey).replace(/[<>&"]/g, '')}" style="width:100%;height:100%;image-rendering:pixelated;object-fit:contain;display:block;" />`;
     } catch {
-      return '';
+      containerEl.innerHTML = '';
     }
   }
 
@@ -375,7 +406,13 @@ class InterfaceRenderer {
         if (window.__ccElements && window.__ccElements[elemKey]) {
           window.__ccElements[elemKey].valor = Number(inp.value);
         }
-        this._triggerRerun('input', { key: elemKey });
+      });
+      inp.addEventListener('change', () => {
+        val.textContent = inp.value;
+        if (window.__ccElements && window.__ccElements[elemKey]) {
+          window.__ccElements[elemKey].valor = Number(inp.value);
+        }
+        this._triggerRerun('change', { key: elemKey });
       });
       el.appendChild(lbl);
       el.appendChild(inp);

@@ -6,13 +6,16 @@ import {
   copyScriptCode, confirmDeleteScript, importScriptFile,
   openCsvModal, closeCsvModal, saveCsvFromModal, copyCsvImport,
   deleteCsvDataset, suggestCsvKey, loadCsvFile,
+  setActiveScriptId, getActiveScript, clearActiveScript, updateActiveScriptBadge,
+  exportAllScriptsBackup,
 } from './storage.js';
 import {
   codeEditor, outputRenderer, errorManager, runtime,
   updateEditor, scheduleHighlight, syncScroll, goToLine, toggleErrorPanel, AutoComplete,
 } from './editor.js';
 import { loadTheme, toggleTheme } from './themes.js';
-import { loadTutorial, loadDocs, copyCode } from './tutorial.js';
+import { loadTutorial, copyCode } from './tutorial.js';
+import { loadDocs } from './docs.js';
 import {
   renderLibs, scrollToMeta,
   copyLibImport, copyLibExample,
@@ -112,18 +115,31 @@ apresente "Intensidade atual: " + intensidade.valor + "%" em texto ajuste centro
   },
 ];
 
+// ==================== INTERFACE STATE RESET HELPER ====================
+function resetRuntimeGlobals() {
+  window.__ccState = {};
+  window.__ccElements = {};
+  window.__ccSprites = {};
+  window.__ccTecla = { valor: '', atual: '' };
+  window.__ccLastEvent = null;
+}
+
 // ==================== RUN CODE ====================
-async function runCode() {
+async function runCode(isEventRerun = false) {
   const source = codeEditor.value;
   const t0 = performance.now();
 
-  const btn = document.getElementById('btn-run');
-  if (btn) {
-    btn.classList.add('flash');
-    setTimeout(() => btn.classList.remove('flash'), 350);
+  if (!isEventRerun) {
+    resetRuntimeGlobals();
+    const btn = document.getElementById('btn-run');
+    if (btn) {
+      btn.classList.add('flash');
+      setTimeout(() => btn.classList.remove('flash'), 350);
+    }
   }
 
   const csvDatasets = getCsvDatasets();
+  const savedSprites = window.__ccImages || {};
   const lexer = new Lexer(source, { registry: CrabLibRegistry, csvDatasets });
   const { tokens, errors: lexErrors } = lexer.tokenize();
 
@@ -132,12 +148,9 @@ async function runCode() {
     new Set(lexer.declaredVars),
     new Set(lexer.declaredArrays),
     new Set(lexer.declaredObjects),
-    { registry: CrabLibRegistry, csvDatasets }
+    { registry: CrabLibRegistry, csvDatasets, savedSprites }
   );
   const { ast, errors: parseErrors } = parser.parse();
-
-  const allParseErrors = [...lexErrors, ...parseErrors];
-  errorManager.setErrors(allParseErrors);
 
   const transpiler = new Transpiler(
     ast,
@@ -148,9 +161,8 @@ async function runCode() {
   );
   const { code: jsCode, errors: transpileErrors } = transpiler.transpile();
 
-  if (transpileErrors.length > 0) {
-    errorManager.setErrors([...allParseErrors, ...transpileErrors]);
-  }
+  const allCompileErrors = [...lexErrors, ...parseErrors, ...transpileErrors];
+  errorManager.setErrors(allCompileErrors, { autoExpand: !isEventRerun });
 
   const csvInjection = getCsvInjectionCode(source);
   const result = await runtime.runInSandbox(csvInjection + jsCode);
@@ -161,6 +173,12 @@ async function runCode() {
   const outputBody = document.getElementById('output-body');
   const resetIfaceBtn = document.getElementById('btn-reset-iface');
   const modeBadge = document.getElementById('output-mode-badge');
+
+  if (error) {
+    errorManager.setRuntimeError(error);
+  } else {
+    errorManager.clearRuntimeErrors();
+  }
 
   if (transpiler._interfaceMode) {
     _lastWasInterface = true;
@@ -207,13 +225,9 @@ async function runCode() {
 }
 
 function resetInterfaceState() {
-  window.__ccState = {};
-  window.__ccElements = {};
-  window.__ccSprites = {};
-  window.__ccTecla = { atual: '' };
-  window.__ccLastEvent = null;
+  resetRuntimeGlobals();
   showToast('Estado da interface reiniciado.', 'info', 1600);
-  runCode();
+  runCode(false);
 }
 
 // ==================== CLEAR / COPY OUTPUT ====================
@@ -240,20 +254,20 @@ async function copyOutput() {
 }
 
 // ==================== TRY CODE IN EDITOR ====================
-function tryInEditor(code, autoRun = true) {
+function tryInEditor(code, autoRun = true, { keepActiveScript = false } = {}) {
   if (typeof code !== 'string') return;
-  // Reset interface runtime state when switching to a brand-new snippet
-  window.__ccState = {};
-  window.__ccElements = {};
-  window.__ccSprites = {};
-  window.__ccTecla = { atual: '' };
-  window.__ccLastEvent = null;
+  resetRuntimeGlobals();
+
+  if (!keepActiveScript) {
+    clearActiveScript();
+  }
 
   codeEditor.value = code;
   updateEditor();
   saveCode();
+  updateActiveScriptBadge();
   switchTab('editor');
-  if (autoRun) runCode();
+  if (autoRun) runCode(false);
 }
 
 // ==================== TAB SWITCHING ====================
@@ -380,11 +394,16 @@ function initShortcuts() {
   document.addEventListener('keydown', (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
       e.preventDefault();
-      runCode();
+      runCode(false);
     } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
       e.preventDefault();
-      saveCode();
-      showToast('Código salvo no navegador.', 'success', 1400);
+      const active = getActiveScript();
+      saveCode({ syncActiveScript: true });
+      if (active) {
+        showToast(`Script "${active.title}" atualizado!`, 'success', 1500);
+      } else {
+        showToast('Rascunho salvo no navegador.', 'success', 1400);
+      }
     } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'l') {
       e.preventDefault();
       clearOutput();
@@ -399,6 +418,10 @@ function initShortcuts() {
       closeScriptModal();
       closeLibModal();
       closeCsvModal();
+      const imgModal = document.getElementById('image-modal');
+      if (imgModal && imgModal.style.display !== 'none') {
+        document.getElementById('close-image-modal')?.click();
+      }
     }
   });
 
@@ -473,11 +496,9 @@ function exportPNG() {
     const ctx = canvas.getContext('2d');
     ctx.scale(scale, scale);
 
-    // Outer background
     ctx.fillStyle = bgPrimary;
     ctx.fillRect(0, 0, W, H);
 
-    // Card surface with rounded corners
     const roundRect = (x, y, w, h, r) => {
       ctx.beginPath();
       ctx.moveTo(x + r, y);
@@ -495,7 +516,6 @@ function exportPNG() {
     ctx.lineWidth = 1;
     ctx.stroke();
 
-    // Header strip
     ctx.save();
     roundRect(padOuter, padOuter, cardW, cardH, 12);
     ctx.clip();
@@ -507,7 +527,6 @@ function exportPNG() {
     ctx.lineTo(padOuter + cardW, padOuter + headerH);
     ctx.stroke();
 
-    // Brand label
     ctx.font = '600 13px "Plus Jakarta Sans", system-ui, sans-serif';
     ctx.fillStyle = colorMap.laranja;
     ctx.fillText('Crab', padOuter + 18, padOuter + 27);
@@ -522,7 +541,6 @@ function exportPNG() {
     ctx.fillText(`${lines.length} linhas · ${stamp}`, padOuter + cardW - 18, padOuter + 26);
     ctx.textAlign = 'left';
 
-    // Code lines
     const codeFont = `${fontSize}px "JetBrains Mono", Consolas, monospace`;
     const codeBoldFont = `600 ${fontSize}px "JetBrains Mono", Consolas, monospace`;
 
@@ -530,7 +548,6 @@ function exportPNG() {
       const lineNum = idx + 1;
       const y = padOuter + headerH + 26 + idx * lineHeight;
 
-      // Line number
       ctx.font = `12px "JetBrains Mono", Consolas, monospace`;
       ctx.fillStyle = textMuted;
       ctx.textAlign = 'right';
@@ -590,7 +607,7 @@ function togglePresentation() {
 }
 
 function enterPresentation() {
-  runCode().then(() => {
+  runCode(false).then(() => {
     document.body.classList.add('presentation');
     isPresentationMode = true;
     const el = document.documentElement;
@@ -622,7 +639,6 @@ function exportPDF() {
   const stemOutput = document.getElementById('stem-output');
   const outputClone = stemOutput ? stemOutput.cloneNode(true) : document.createElement('div');
 
-  // Convert any Chart canvases inside outputClone to static images for printing
   const origCanvases = stemOutput ? stemOutput.querySelectorAll('canvas') : [];
   const cloneCanvases = outputClone.querySelectorAll('canvas');
   origCanvases.forEach((orig, idx) => {
@@ -661,7 +677,6 @@ function exportHTML() {
   const textPrimary = resolveVar('--text-primary', isDark ? '#e6eaf4' : '#181c29');
   const colorLaranja = resolveVar('--color-laranja', '#f97316');
 
-  // Snapshot active output (convert any <canvas> charts to inline PNGs!)
   const ifaceCanvas = document.getElementById('interface-canvas');
   let outputHTML = '';
   if (_lastWasInterface && ifaceCanvas && ifaceCanvas.style.display !== 'none') {
@@ -742,6 +757,7 @@ function init() {
   loadTheme();
   loadCode();
   updateEditor();
+  updateActiveScriptBadge();
   loadTutorial();
   loadDocs();
   initResize();
@@ -755,11 +771,14 @@ function init() {
     window.__ccImages = {};
   }
 
-  codeEditor.addEventListener('input', updateEditor);
+  codeEditor.addEventListener('input', () => {
+    updateEditor();
+    updateActiveScriptBadge();
+  });
   codeEditor.addEventListener('scroll', syncScroll);
 
   // Header & Output controls
-  document.getElementById('btn-run')?.addEventListener('click', runCode);
+  document.getElementById('btn-run')?.addEventListener('click', () => runCode(false));
   document.getElementById('btn-clear')?.addEventListener('click', clearOutput);
   document.getElementById('btn-clear-output')?.addEventListener('click', clearOutput);
   document.getElementById('btn-copy-output')?.addEventListener('click', copyOutput);
@@ -774,8 +793,8 @@ function init() {
   document.getElementById('btn-save-as-script')?.addEventListener('click', openSaveCurrentScriptModal);
   document.getElementById('error-toggle')?.addEventListener('click', toggleErrorPanel);
 
-  // Interface mode re-run on interactive element events
-  window.addEventListener('crab-rerun', () => { runCode(); });
+  // Interface mode re-run on interactive element events (preserves __ccState!)
+  window.addEventListener('crab-rerun', () => { runCode(true); });
   window.addEventListener('crab-highlight-refresh', () => { scheduleHighlight(); });
 
   // Tab buttons
@@ -789,6 +808,8 @@ function init() {
   document.getElementById('close-script-modal')?.addEventListener('click', closeScriptModal);
   document.getElementById('save-script-btn')?.addEventListener('click', saveScript);
   document.getElementById('scripts-search')?.addEventListener('input', renderScripts);
+  document.getElementById('scripts-sort')?.addEventListener('change', renderScripts);
+  document.getElementById('btn-backup-scripts')?.addEventListener('click', exportAllScriptsBackup);
 
   const scriptFileInput = document.getElementById('script-file-input');
   document.getElementById('btn-import-script')?.addEventListener('click', () => scriptFileInput?.click());
@@ -839,9 +860,8 @@ function init() {
   });
 
   scheduleHighlight();
-  // Auto-run initial editor code once on startup for immediate visual feedback
   if (codeEditor.value.trim()) {
-    setTimeout(() => runCode(), 90);
+    setTimeout(() => runCode(false), 90);
   }
 }
 
@@ -857,11 +877,12 @@ window.openCsvModal = openCsvModal;
 window.deleteCsvDataset = deleteCsvDataset;
 window.tryInEditor = tryInEditor;
 window.goToLine = goToLine;
-window.loadIntoEditor = function (id) {
+window.loadIntoEditor = function (id, autoRun = false) {
   const s = loadScripts().find(x => x.id === id);
   if (!s) return;
-  tryInEditor(s.code, false);
-  showToast(`Script "${s.title}" aberto no editor.`, 'info', 1600);
+  setActiveScriptId(s.id);
+  tryInEditor(s.code, autoRun, { keepActiveScript: true });
+  showToast(`Script "${s.title}" aberto no editor (Ctrl+S atualiza).`, 'info', 1800);
 };
 
 init();

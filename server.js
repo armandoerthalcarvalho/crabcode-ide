@@ -6,37 +6,20 @@ function isValidKey(key) {
   return typeof key === 'string' && /^[a-zA-Z0-9_\-]{1,64}$/.test(key);
 }
 
-function createApp(initialStore = new Map()) {
+function createApp() {
   const app = express();
-  // In-memory store (replaces native better-sqlite3 for AI Studio container compatibility)
-  const kvStore = initialStore;
 
   app.use(cors());
   app.use(express.json({ limit: '64kb' }));
 
-  // ==================== CLOUD KV API ROUTES ====================
-  app.get('/load/:key', (req, res) => {
-    const key = req.params.key;
-    if (!isValidKey(key)) return res.status(400).json({ error: 'chave inválida' });
-    const raw = kvStore.get(key);
-    if (!raw) return res.json({});
-    try {
-      res.json(JSON.parse(raw));
-    } catch {
-      res.json({});
-    }
-  });
-
-  app.post('/save/:key', (req, res) => {
-    const key = req.params.key;
-    if (!isValidKey(key)) return res.status(400).json({ error: 'chave inválida' });
-    const body = req.body;
-    if (!body || typeof body !== 'object' || Array.isArray(body)) {
-      return res.status(400).json({ error: 'corpo inválido' });
-    }
-    kvStore.set(key, JSON.stringify(body));
-    res.json({ ok: true });
-  });
+  // ==================== CLOUD KV ROUTES (DISABLED — NO CLOUD BACKEND) ====================
+  const cloudUnavailable = (_req, res) => {
+    res.status(501).json({
+      error: 'Armazenamento em nuvem não está disponível neste ambiente. Utilize salve local / carregue local.'
+    });
+  };
+  app.get('/load/:key', cloudUnavailable);
+  app.post('/save/:key', cloudUnavailable);
 
   // ==================== STATIC FRONTEND ====================
   app.use('/assets', express.static(path.join(__dirname, 'assets')));

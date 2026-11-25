@@ -3,9 +3,7 @@
 import { applyExtraLibsAndRanking } from './extra_libs.js';
 
 // ==================== CONSTANTS ====================
-const CRABCODE_CLOUD_URL = (typeof window !== 'undefined' && window.location && window.location.origin && window.location.origin !== 'null')
-  ? window.location.origin
-  : 'https://crabcode-api.onrender.com';
+// Armazenamento em nuvem desativado (persistência 100% local via localStorage).
 
 // ==================== TOKEN DEFINITIONS ====================
 const TokenDef = {
@@ -417,9 +415,19 @@ class Lexer {
               }
               if (!hasDefina || !hasComo) continue;
             }
-            // Amarelo multi-word tokens — only in interface mode
+            // Amarelo multi-word tokens — in interface mode, or after execute/apresente so Parser emits E_NEED_INTERFACE
             if (mk.key === 'COR_DE_TEXTO' || mk.key === 'COR_DE_FUNDO') {
-              if (!this._interfaceMode) continue;
+              if (!this._interfaceMode) {
+                let hasExecOrApres = false;
+                for (let i = this.tokens.length - 1; i >= 0; i--) {
+                  if (this.tokens[i].type === 'NEWLINE') break;
+                  if (this.tokens[i].type === 'EXECUTE' || this.tokens[i].type === 'APRESENTE') {
+                    hasExecOrApres = true;
+                    break;
+                  }
+                }
+                if (!hasExecOrApres) continue;
+              }
             }
             const val = this.source.substring(this.pos, this.pos + mk.word.length);
             this.tokens.push({
@@ -747,9 +755,9 @@ class Lexer {
 
 // ==================== PARSER ====================
 class Parser {
-  constructor(tokens, declaredVars, declaredArrays, declaredObjects, { registry = null, csvDatasets = [] } = {}) {
-    this.tokens = tokens.filter(t => t.type !== 'WS' && t.type !== 'COMMENT'); // remove whitespace and comment tokens for parsing
-    this.allTokens = tokens; // keep all for highlighting
+  constructor(tokens, declaredVars, declaredArrays, declaredObjects, { registry = null, csvDatasets = [], savedSprites = null } = {}) {
+    this.tokens = tokens.filter(t => t.type !== 'WS' && t.type !== 'COMMENT');
+    this.allTokens = tokens;
     this.pos = 0;
     this.errors = [];
     this.ast = [];
@@ -758,11 +766,125 @@ class Parser {
     this.declaredObjects = declaredObjects || new Set();
     this._registry = registry;
     this._csvDatasets = csvDatasets;
+    this._savedSprites = savedSprites;
+    this._definedNames = new Map();
+    this._funcArity = new Map();
+  }
+
+  _addDiag(message, token, code = 'E_SYNTAX', severity = 'error') {
+    this.errors.push({
+      message,
+      line: token?.line ?? 1,
+      col: token?.col ?? 1,
+      length: token?.value ? String(token.value).length : 1,
+      severity,
+      code
+    });
+  }
+
+  _validateRgbNumbers(nums, token, label) {
+    if (nums.length !== 3) {
+      this._addDiag(`'${label}' exige exatamente 3 valores RGB entre 0 e 255. Ex: ${label} 15 23 42`, token, 'E_RGB_ARGS');
+      return false;
+    }
+    for (const v of nums) {
+      if (!Number.isFinite(v) || v < 0 || v > 255) {
+        this._addDiag(`Valor RGB inválido (${v}) em '${label}'. Use números entre 0 e 255.`, token, 'E_RGB_RANGE');
+        return false;
+      }
+    }
+    return true;
+  }
+
+  _extractJsArity(jsCode) {
+    if (!jsCode) return;
+    const fnRe = /function\s+([a-zA-ZÀ-ÿ_][a-zA-ZÀ-ÿ0-9_]*)\s*\(([^)]*)\)\s*\{/g;
+    let m;
+    while ((m = fnRe.exec(jsCode)) !== null) {
+      const fnName = m[1];
+      const rawParams = m[2].trim();
+      // Slice approximate function body up to next function or 400 chars
+      const bodyStart = m.index + m[0].length;
+      const nextFnIdx = jsCode.indexOf('\nfunction ', bodyStart);
+      const body = jsCode.slice(bodyStart, nextFnIdx === -1 ? bodyStart + 500 : Math.min(nextFnIdx, bodyStart + 500));
+
+      if (!rawParams) {
+        this._funcArity.set(fnName, { min: 0, max: 0 });
+        continue;
+      }
+      const parts = rawParams.split(',').map(s => s.trim()).filter(Boolean);
+      let min = 0;
+      let max = 0;
+      let hasRest = false;
+      const paramNames = [];
+      for (const p of parts) {
+        if (p.startsWith('...')) {
+          hasRest = true;
+          max = Infinity;
+          break;
+        }
+        max++;
+        const cleanName = p.split('=')[0].trim();
+        paramNames.push({ name: cleanName, hasDefault: p.includes('=') });
+      }
+      // Count required params: a trailing parameter is optional if it has '=' OR body handles null/undefined/|| fallback
+      let required = paramNames.length;
+      for (let idx = paramNames.length - 1; idx >= 0; idx--) {
+        const { name, hasDefault } = paramNames[idx];
+        const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const bodyOptional = new RegExp(
+          `\\b${esc}\\s*(?:===?\\s*(?:undefined|null)|!==?\\s*(?:undefined|null)|\\|\\|)|typeof\\s+${esc}\\b`
+        ).test(body);
+        if (hasDefault || bodyOptional) {
+          required--;
+        } else {
+          break;
+        }
+      }
+      min = Math.max(0, required);
+      if (!hasRest && /\barguments\b/.test(body)) max = Infinity;
+      this._funcArity.set(fnName, { min, max });
+    }
+  }
+
+  _collectArityMetadata(lines) {
+    for (const lt of lines) {
+      if (lt.length >= 2 && lt[0].type === 'IMPORTE' && lt[1].type === 'IDENTIFIER' && this._registry) {
+        const key = lt[1].value;
+        const collectLib = (k, visited = new Set()) => {
+          if (visited.has(k)) return;
+          visited.add(k);
+          const lib = this._registry.get(k);
+          if (!lib) return;
+          if (lib.dependencies) {
+            for (const dep of lib.dependencies) collectLib(dep, visited);
+          }
+          if (lib.jsCode) this._extractJsArity(lib.jsCode);
+        };
+        collectLib(key);
+      } else if (lt.length >= 4 && lt[0].type === 'DEFINA' && lt[1].type === 'IDENTIFIER' && lt[2].type === 'COMO' && lt[3].type === 'FUNCAO') {
+        // User-defined function arity (skip interactive elements)
+        const nextTok = lt[4];
+        if (nextTok && ['BOTAO', 'TOGGLE', 'SLIDER', 'SELETOR', 'DIGITE', 'PERGUNTE'].includes(nextTok.type)) continue;
+        const params = [];
+        if (nextTok && nextTok.type === 'PAREN' && nextTok.value === '(') {
+          let i = 5;
+          while (i < lt.length && !(lt[i].type === 'PAREN' && lt[i].value === ')')) {
+            if (lt[i].type === 'IDENTIFIER') params.push(lt[i].value);
+            i++;
+          }
+          // Skip interactive elements defined with funcao() botao(...)
+          const afterClose = lt[i + 1];
+          if (afterClose && ['BOTAO', 'TOGGLE', 'SLIDER', 'SELETOR', 'DIGITE', 'PERGUNTE'].includes(afterClose.type)) continue;
+        }
+        this._funcArity.set(lt[1].value, { min: params.length, max: params.length });
+      }
+    }
   }
 
   peek() { return this.tokens[this.pos]; }
   advance() { return this.tokens[this.pos++]; }
-  
+
   isAtEnd() { return this.pos >= this.tokens.length; }
 
   expect(type) {
@@ -786,10 +908,14 @@ class Parser {
 
   // ---- VALIDATION HELPERS ----
 
-  // Validates a token sequence that represents an expression
-  // Reports: unbalanced parens/brackets, unknown function calls, empty expressions, operator misuse
-  validateExpr(tokens, context) {
+  validateExpr(tokens, context, extraScope = null) {
     if (!tokens || tokens.length === 0) return;
+
+    const isKnown = (name) =>
+      this.declaredVars.has(name) ||
+      (extraScope && extraScope.has(name)) ||
+      name === 'rodar' ||
+      (this._interfaceMode && name === 'tecla');
 
     // 1. Balanced parentheses & brackets
     let depth = 0;
@@ -801,23 +927,23 @@ class Parser {
       else if (t.type === 'PAREN' && t.value === ')') {
         depth--;
         if (depth < 0) {
-          this.errors.push({ message: `Parêntese ')' sem abertura correspondente`, line: t.line, col: t.col, length: 1 });
+          this._addDiag(`Parêntese ')' sem abertura correspondente`, t, 'E_PAREN');
           depth = 0;
         }
       } else if (t.type === 'BRACKET' && t.value === '[') { bDepth++; lastOpenBracket = t; }
       else if (t.type === 'BRACKET' && t.value === ']') {
         bDepth--;
         if (bDepth < 0) {
-          this.errors.push({ message: `Colchete ']' sem abertura correspondente`, line: t.line, col: t.col, length: 1 });
+          this._addDiag(`Colchete ']' sem abertura correspondente`, t, 'E_BRACKET');
           bDepth = 0;
         }
       }
     }
     if (depth > 0 && lastOpenTok) {
-      this.errors.push({ message: `Parêntese '(' não foi fechado`, line: lastOpenTok.line, col: lastOpenTok.col, length: 1 });
+      this._addDiag(`Parêntese '(' não foi fechado`, lastOpenTok, 'E_PAREN');
     }
     if (bDepth > 0 && lastOpenBracket) {
-      this.errors.push({ message: `Colchete '[' não foi fechado`, line: lastOpenBracket.line, col: lastOpenBracket.col, length: 1 });
+      this._addDiag(`Colchete '[' não foi fechado`, lastOpenBracket, 'E_BRACKET');
     }
 
     // 2. Operator at start or end (allowing unary '-' and '!')
@@ -826,28 +952,75 @@ class Parser {
       const first = meaningful[0];
       const last = meaningful[meaningful.length - 1];
       if (first.type === 'OPERATOR' && first.value !== '-' && first.value !== '!') {
-        this.errors.push({ message: `Expressão começa com operador '${first.value}' inválido`, line: first.line, col: first.col, length: first.value.length });
+        this._addDiag(`Expressão começa com operador '${first.value}' inválido`, first, 'E_OP_LEADING');
       }
       if (last.type === 'OPERATOR') {
-        this.errors.push({ message: `Expressão termina com operador '${last.value}' sem segundo operando`, line: last.line, col: last.col, length: last.value.length });
+        this._addDiag(`Expressão termina com operador '${last.value}' sem segundo operando`, last, 'E_OP_TRAILING');
       }
     }
 
-    // 3. Two consecutive operators (allow unary '-' or '!' as second operator, e.g. x = -5, a * -2)
+    // 3. Two consecutive operators & literal division/modulo by zero
     for (let i = 0; i < tokens.length - 1; i++) {
       if (tokens[i].type === 'OPERATOR' && tokens[i + 1].type === 'OPERATOR') {
         if (tokens[i + 1].value === '-' || tokens[i + 1].value === '!') continue;
-        this.errors.push({ message: `Dois operadores consecutivos: '${tokens[i].value}' e '${tokens[i+1].value}'`, line: tokens[i].line, col: tokens[i].col, length: tokens[i].value.length });
+        this._addDiag(`Dois operadores consecutivos: '${tokens[i].value}' e '${tokens[i + 1].value}'`, tokens[i], 'E_OP_CONSEC');
+      }
+      if (
+        tokens[i].type === 'OPERATOR' &&
+        (tokens[i].value === '/' || tokens[i].value === '%') &&
+        tokens[i + 1].type === 'NUMBER' &&
+        Number(tokens[i + 1].value) === 0
+      ) {
+        this._addDiag(`Divisão ou resto por zero literal detectado ('${tokens[i].value} 0').`, tokens[i], 'E_DIV_ZERO');
       }
     }
 
-    // 4. Function/array calls: identifier followed by '(' — check the name is declared
+    // 4. Function/array calls + arity validation
     for (let i = 0; i < tokens.length - 1; i++) {
       const t = tokens[i];
       const next = tokens[i + 1];
+      const prev = i > 0 ? tokens[i - 1] : null;
+      if (prev && prev.type === 'PONTO') continue;
       if (t.type === 'IDENTIFIER' && next && next.type === 'PAREN' && next.value === '(') {
-        if (!this.declaredVars.has(t.value) && t.value !== 'rodar') {
-          this.errors.push({ message: `'${t.value}' não foi declarado como função ou array`, line: t.line, col: t.col, length: t.value.length });
+        if (!isKnown(t.value)) {
+          this._addDiag(`'${t.value}' não foi declarado como função ou lista. Importe a biblioteca correspondente ou declare com 'defina'.`, t, 'E_UNDEF_CALL');
+        } else if (this._funcArity.has(t.value) && !this.declaredArrays.has(t.value)) {
+          // Count top-level comma-separated arguments inside parens
+          const spec = this._funcArity.get(t.value);
+          let d = 1;
+          let j = i + 2;
+          let hasAnyToken = false;
+          let commas = 0;
+          let closed = false;
+          while (j < tokens.length && d > 0) {
+            if ((tokens[j].type === 'PAREN' && tokens[j].value === '(') || (tokens[j].type === 'BRACKET' && tokens[j].value === '[')) {
+              if (d === 1) hasAnyToken = true;
+              d++;
+            } else if ((tokens[j].type === 'PAREN' && tokens[j].value === ')') || (tokens[j].type === 'BRACKET' && tokens[j].value === ']')) {
+              d--;
+              if (d === 0) { closed = true; break; }
+            } else if (tokens[j].type === 'VIRGULA' && d === 1) {
+              commas++;
+            } else if (d === 1) {
+              hasAnyToken = true;
+            }
+            j++;
+          }
+          if (closed) {
+            const argCount = hasAnyToken ? commas + 1 : 0;
+            if (argCount < spec.min || argCount > spec.max) {
+              const expected = spec.max === Infinity
+                ? `pelo menos ${spec.min}`
+                : spec.min === spec.max
+                  ? `${spec.min}`
+                  : `entre ${spec.min} e ${spec.max}`;
+              this._addDiag(
+                `A função '${t.value}' espera ${expected} argumento(s), mas recebeu ${argCount}.`,
+                t,
+                'E_ARITY'
+              );
+            }
+          }
         }
       }
     }
@@ -856,48 +1029,68 @@ class Parser {
     for (let i = 0; i < tokens.length - 1; i++) {
       const t = tokens[i];
       const next = tokens[i + 1];
+      const prev = i > 0 ? tokens[i - 1] : null;
+      if (prev && prev.type === 'PONTO') continue;
       if (t.type === 'IDENTIFIER' && next && next.type === 'PONTO') {
-        if (!this.declaredVars.has(t.value)) {
-          this.errors.push({ message: `'${t.value}' não foi declarado`, line: t.line, col: t.col, length: t.value.length });
+        if (!isKnown(t.value)) {
+          this._addDiag(`'${t.value}' não foi declarado antes do acesso '.${tokens[i + 2]?.value || ''}'.`, t, 'E_UNDEF_VAR');
         }
       }
+    }
+
+    // 6. Standalone undeclared identifiers (prevents silent auto-stringification of typos!)
+    for (let i = 0; i < tokens.length; i++) {
+      const t = tokens[i];
+      if (t.type !== 'IDENTIFIER') continue;
+      const prev = i > 0 ? tokens[i - 1] : null;
+      const next = i + 1 < tokens.length ? tokens[i + 1] : null;
+      if (prev && prev.type === 'PONTO') continue; // property name
+      if (next && (next.type === 'PONTO' || (next.type === 'PAREN' && next.value === '('))) continue; // checked above
+      if (isKnown(t.value)) continue;
+      this._addDiag(
+        `Identificador '${t.value}' não foi declarado. Se for um texto literal, coloque entre aspas: "${t.value}".`,
+        t,
+        'E_UNDEF_VAR'
+      );
     }
   }
 
   // Validates that a condition has a comparison operator or valid boolean expression
-  validateCond(tokens, context) {
+  validateCond(tokens, context, extraScope = null) {
     if (!tokens || tokens.length === 0) return;
     const hasComparison = tokens.some(t => t.type === 'OPERATOR' && ['>', '<', '=', '==', '!=', '>=', '<='].includes(t.value));
     const hasBooleanExpr = tokens.some(t =>
       t.type === 'VERDADEIRO' || t.type === 'FALSO' || t.type === 'NAO' ||
-      t.type === 'PONTO' || (t.type === 'IDENTIFIER' && this.declaredVars.has(t.value))
+      t.type === 'PONTO' || (t.type === 'IDENTIFIER' && (this.declaredVars.has(t.value) || (extraScope && extraScope.has(t.value))))
     );
     if (!hasComparison && !hasBooleanExpr) {
       const first = tokens[0];
-      this.errors.push({ message: `Condição após '${context}' não tem operador de comparação (use >, <, =, !=, >=, <=)`, line: first.line, col: first.col, length: first.value.length });
+      this._addDiag(`Condição após '${context}' não tem operador de comparação (use >, <, =, !=, >=, <=)`, first, 'E_COND');
     }
-    this.validateExpr(tokens, context);
+    this.validateExpr(tokens, context, extraScope);
   }
 
   // Check a repetition count — must be a single number or declared variable
   validateRepeatCount(timesTokens, repitaToken) {
     if (!timesTokens || timesTokens.length === 0) {
-      this.errors.push({ message: `Esperado número após 'repita'`, line: repitaToken.line, col: repitaToken.col, length: repitaToken.value.length });
+      this._addDiag(`Esperado número após 'repita'`, repitaToken, 'E_REPEAT_COUNT');
       return;
     }
     if (timesTokens.length === 1) {
       const t = timesTokens[0];
       if (t.type === 'NUMBER') {
         const n = parseFloat(t.value);
-        if (n < 0) this.errors.push({ message: `Número de repetições não pode ser negativo`, line: t.line, col: t.col, length: t.value.length });
-        if (!Number.isInteger(n)) this.errors.push({ message: `Número de repetições deve ser inteiro, não '${t.value}'`, line: t.line, col: t.col, length: t.value.length });
+        if (n < 0) this._addDiag(`Número de repetições não pode ser negativo`, t, 'E_REPEAT_COUNT');
+        if (!Number.isInteger(n)) this._addDiag(`Número de repetições deve ser inteiro, não '${t.value}'`, t, 'E_REPEAT_COUNT');
       } else if (t.type === 'IDENTIFIER') {
         if (!this.declaredVars.has(t.value)) {
-          this.errors.push({ message: `'${t.value}' não foi declarado — use um número ou variável declarada`, line: t.line, col: t.col, length: t.value.length });
+          this._addDiag(`'${t.value}' não foi declarado — use um número ou variável declarada`, t, 'E_UNDEF_VAR');
         }
       } else {
-        this.errors.push({ message: `Valor inválido para número de repetições: '${t.value}'`, line: t.line, col: t.col, length: t.value.length });
+        this._addDiag(`Valor inválido para número de repetições: '${t.value}'`, t, 'E_REPEAT_COUNT');
       }
+    } else {
+      this.validateExpr(timesTokens, 'repita');
     }
   }
 
@@ -911,7 +1104,13 @@ class Parser {
       lineTokens[1].type === 'IDENTIFIER' &&
       lineTokens[1].value === 'interface'
     );
-    
+    if (this._interfaceMode) {
+      this.declaredVars.add('tecla');
+    }
+
+    // Gather arity metadata for imported official libraries & user-defined functions
+    this._collectArityMetadata(lines);
+
     for (const lineTokens of lines) {
       if (lineTokens.length === 0) continue;
       this.parseLineTokens(lineTokens);
@@ -925,22 +1124,21 @@ class Parser {
 
     const first = tokens[0];
 
-    // Check for illegal tokens
-    for (const t of tokens) {
-      if (t.type === 'ILLEGAL') {
-        // Error already added by lexer
-      }
-    }
-
-    // Count laranja commands (except inside funcao bodies)
-    let laranjaCount = 0;
-    let inFuncao = false;
+    // Check multiple top-level primary commands on one line (outside funcao, loop, botao, or parens like rodar(...))
+    let pDepth = 0;
+    let inSubBlock = false;
+    let primaryCount = 0;
     for (let i = 0; i < tokens.length; i++) {
       const t = tokens[i];
-      if (t.type === 'FUNCAO') inFuncao = true;
-      if (['DEFINA', 'EXECUTE', 'APRESENTE'].includes(t.type)) {
-        if (!inFuncao || laranjaCount === 0) {
-          laranjaCount++;
+      if (t.type === 'PAREN' && t.value === '(') { pDepth++; continue; }
+      if (t.type === 'PAREN' && t.value === ')') { pDepth = Math.max(0, pDepth - 1); continue; }
+      if (pDepth > 0) continue;
+      if (t.type === 'FUNCAO' || t.type === 'LOOP' || t.type === 'BOTAO') { inSubBlock = true; continue; }
+      if (!inSubBlock && ['DEFINA', 'ALTERE', 'EXECUTE', 'APRESENTE', 'IMPORTE', 'SALVE', 'CARREGUE'].includes(t.type)) {
+        primaryCount++;
+        if (primaryCount > 1) {
+          this._addDiag(`Apenas um comando principal por linha. Quebre '${t.value}' em uma nova linha.`, t, 'E_MULTI_CMD');
+          break;
         }
       }
     }
@@ -961,20 +1159,11 @@ class Parser {
     } else if (first.type === 'CARREGUE') {
       this.parseCarregue(tokens);
     } else if (['COMO', 'PARA', 'EM', 'SE', 'REPITA', 'LOOP', 'COM', 'POTENCIA_DE', 'RAIZ_DE', 'ALEATORIO_ENTRE', 'JUROS_COMPOSTOS', 'PERCENTIL_DE', 'TAMANHO_DE', 'LOCAL', 'NUVEM', 'USANDO'].includes(first.type)) {
-      this.errors.push({
-        message: `'${first.value}' é um comando secundário e não pode iniciar uma linha. Use 'defina', 'altere', 'execute', 'apresente' ou 'importe' primeiro.`,
-        line: first.line, col: first.col, length: first.value.length
-      });
+      this._addDiag(`'${first.value}' é um comando secundário e não pode iniciar uma linha. Use 'defina', 'altere', 'execute', 'apresente' ou 'importe' primeiro.`, first, 'E_LINE_START');
     } else if (['FUNCAO', 'OBJETO', 'OBJETO_DE', 'TENDENCIA_DE', 'TEXTO', 'DESTAQUE', 'APRESENTACAO', 'APRESENTACAO_ALT', 'DADOS', 'TABELA', 'GRAFICO', 'ESTATISTICAS', 'CIENTIFICA', 'AMOSTRAS', 'COMPACTAR', 'RELATANDO', 'ENQUANTO', 'VEZES', 'E_CONJ', 'SENAO'].includes(first.type)) {
-      this.errors.push({
-        message: `'${first.value}' é um comando terciário e não pode iniciar uma linha.`,
-        line: first.line, col: first.col, length: first.value.length
-      });
+      this._addDiag(`'${first.value}' é um comando terciário e não pode iniciar uma linha.`, first, 'E_LINE_START');
     } else {
-      this.errors.push({
-        message: `Linha deve começar com 'defina', 'altere', 'execute', 'apresente' ou 'importe'. Encontrado: '${first.value}'`,
-        line: first.line, col: first.col, length: first.value.length
-      });
+      this._addDiag(`Linha deve começar com 'defina', 'altere', 'execute', 'apresente', 'importe', 'salve' ou 'carregue'. Encontrado: '${first.value}'`, first, 'E_LINE_START');
     }
   }
 
@@ -1160,6 +1349,18 @@ class Parser {
       return;
     }
 
+    // Detect duplicate defina in the same script
+    if (this._definedNames.has(nameToken.value)) {
+      const firstLine = this._definedNames.get(nameToken.value);
+      this._addDiag(
+        `Variável '${nameToken.value}' já foi definida na linha ${firstLine}. Use 'altere ${nameToken.value} para ...' para mudar seu valor.`,
+        nameToken,
+        'E_DUP_DEF'
+      );
+    } else {
+      this._definedNames.set(nameToken.value, nameToken.line);
+    }
+
     // Check if it's a function definition
     if (tokens[3].type === 'FUNCAO') {
       this.parseDefinaFuncao(tokens, nameToken);
@@ -1258,13 +1459,17 @@ class Parser {
         valueTokens,
         line: tokens[0].line
       });
-    } else if (tokens[3].type === 'SPRITE' && this._interfaceMode) {
+    } else if (tokens[3].type === 'SPRITE') {
+      if (!this._interfaceMode) {
+        this._addDiag(`'sprite' requer 'importe interface' no início do script.`, tokens[3], 'E_NEED_INTERFACE');
+        return;
+      }
       // defina X como sprite reto(x1,y1, x2,y2, ...) [com cor R G B]
       // defina X como sprite curvo(r) [com cor R G B]
       // defina X como sprite "KEY" | KEY
       const spriteKindToken = tokens[4];
       if (!spriteKindToken) {
-        this.errors.push({ message: `'sprite' precisa de 'reto(...)' ou 'curvo(r)' ou o nome de uma imagem`, line: tokens[3].line, col: tokens[3].col, length: tokens[3].value.length });
+        this._addDiag(`'sprite' precisa de 'reto(...)' ou 'curvo(r)' ou o nome de uma imagem`, tokens[3], 'E_SPRITE_SYNTAX');
         return;
       }
       // Helper: parse optional 'com cor R G B' at end of sprite declaration
@@ -1273,14 +1478,20 @@ class Parser {
         if (corIdx === -1) return null;
         const cNums = [];
         for (let ci = corIdx + 1; ci < tokens.length && cNums.length < 3; ci++) {
-          if (tokens[ci].type === 'NUMBER') cNums.push(Number(tokens[ci].value));
+          if (tokens[ci].type === 'OPERATOR' && tokens[ci].value === '-' && tokens[ci + 1]?.type === 'NUMBER') {
+            cNums.push(-Number(tokens[ci + 1].value));
+            ci++;
+          } else if (tokens[ci].type === 'NUMBER') {
+            cNums.push(Number(tokens[ci].value));
+          }
         }
-        return cNums.length === 3 ? { r: cNums[0], g: cNums[1], b: cNums[2] } : null;
+        if (!this._validateRgbNumbers(cNums, tokens[corIdx], 'com cor')) return null;
+        return { r: cNums[0], g: cNums[1], b: cNums[2] };
       };
       if (spriteKindToken.type === 'RETO') {
         const parenOpen = tokens[5];
         if (!parenOpen || parenOpen.type !== 'PAREN' || parenOpen.value !== '(') {
-          this.errors.push({ message: `'sprite reto' precisa de pontos entre parênteses. Ex: sprite reto(0,0, 10,0, 5,10)`, line: spriteKindToken.line, col: spriteKindToken.col, length: spriteKindToken.value.length });
+          this._addDiag(`'sprite reto' precisa de pontos entre parênteses. Ex: sprite reto(0,0, 10,0, 5,10)`, spriteKindToken, 'E_SPRITE_SYNTAX');
           return;
         }
         const nums = [];
@@ -1295,7 +1506,7 @@ class Parser {
           }
         }
         if (nums.length < 6 || nums.length % 2 !== 0) {
-          this.errors.push({ message: `'sprite reto' precisa de pelo menos 3 pontos (6 números). Ex: sprite reto(0,0, 10,0, 5,10)`, line: spriteKindToken.line, col: spriteKindToken.col, length: spriteKindToken.value.length });
+          this._addDiag(`'sprite reto' precisa de pelo menos 3 pontos (6 números). Ex: sprite reto(0,0, 10,0, 5,10)`, spriteKindToken, 'E_SPRITE_SYNTAX');
           return;
         }
         const points = [];
@@ -1305,19 +1516,35 @@ class Parser {
       } else if (spriteKindToken.type === 'CURVO') {
         const parenOpen = tokens[5];
         if (!parenOpen || parenOpen.type !== 'PAREN' || parenOpen.value !== '(') {
-          this.errors.push({ message: `'sprite curvo' precisa de um raio. Ex: sprite curvo(5)`, line: spriteKindToken.line, col: spriteKindToken.col, length: spriteKindToken.value.length });
+          this._addDiag(`'sprite curvo' precisa de um raio. Ex: sprite curvo(25)`, spriteKindToken, 'E_SPRITE_SYNTAX');
           return;
         }
         const rToken = tokens[6];
         const radius = rToken && rToken.type === 'NUMBER' ? Number(rToken.value) : 5;
+        if (radius <= 0) {
+          this._addDiag(`O raio em 'sprite curvo' deve ser maior que zero.`, rToken || spriteKindToken, 'E_SPRITE_SYNTAX');
+        }
         const closeIdx = tokens.findIndex((t, idx) => idx >= 6 && t.type === 'PAREN' && t.value === ')');
         const color = parseSpriteColor(closeIdx !== -1 ? closeIdx + 1 : 7);
         this.ast.push({ type: 'DefineSpriteCircle', name: nameToken.value, radius, color, line: tokens[0].line });
       } else if (spriteKindToken.type === 'IDENTIFIER' || spriteKindToken.type === 'STRING') {
-        // Image reference: sprite "nave" or sprite nave
-        this.ast.push({ type: 'DefineSpriteImage', name: nameToken.value, imageKey: spriteKindToken.value, line: tokens[0].line });
+        const imgKey = spriteKindToken.value;
+        if (this._savedSprites) {
+          const hasImg = this._savedSprites instanceof Set
+            ? this._savedSprites.has(imgKey)
+            : Object.prototype.hasOwnProperty.call(this._savedSprites, imgKey);
+          if (!hasImg) {
+            this._addDiag(
+              `Sprite "${imgKey}" não foi encontrado na aba Imagens. Crie e salve-o com essa chave para exibi-lo.`,
+              spriteKindToken,
+              'W_SPRITE_MISSING',
+              'warning'
+            );
+          }
+        }
+        this.ast.push({ type: 'DefineSpriteImage', name: nameToken.value, imageKey: imgKey, line: tokens[0].line });
       } else {
-        this.errors.push({ message: `'sprite' espera 'reto', 'curvo' ou o nome de uma imagem`, line: spriteKindToken.line, col: spriteKindToken.col, length: spriteKindToken.value.length });
+        this._addDiag(`'sprite' espera 'reto', 'curvo' ou o nome de uma imagem`, spriteKindToken, 'E_SPRITE_SYNTAX');
       }
     } else {
       const valueTokens = tokens.slice(3);
@@ -1421,6 +1648,53 @@ class Parser {
       effectTokens = tokens.slice(kindIdx + 1);
     }
 
+    // Semantic validations for interactive controls
+    if (kind === 'slider') {
+      if (extraArgs.length >= 2 && Number(extraArgs[0]) >= Number(extraArgs[1])) {
+        this._addDiag(`'slider' requer valor mínimo menor que o máximo (recebeu ${extraArgs[0]} e ${extraArgs[1]}).`, kindToken, 'E_SLIDER_RANGE');
+      }
+    } else if (kind === 'seletor') {
+      if (extraArgs.length === 0) {
+        this._addDiag(`'seletor' precisa de pelo menos uma opção. Ex: seletor("Cor", "Azul", "Verde")`, kindToken, 'E_SELETOR_EMPTY');
+      }
+    } else if (kind === 'botao') {
+      if (effectTokens.length === 0) {
+        this._addDiag(`Botão '${nameToken.value}' sem ação. Adicione 'altere VAR para ...' ou 'execute ...' após botao(...).`, kindToken, 'W_BOTAO_NOOP', 'warning');
+      } else if (effectTokens[0].type === 'ALTERE') {
+        const targetTok = effectTokens[1];
+        if (!targetTok || targetTok.type !== 'IDENTIFIER') {
+          this._addDiag(`Esperado nome de variável após 'altere' na ação do botão.`, effectTokens[0], 'E_BOTAO_ACTION');
+        } else if (!this.declaredVars.has(targetTok.value)) {
+          this._addDiag(`Variável '${targetTok.value}' usada no botão '${nameToken.value}' não foi declarada com 'defina'.`, targetTok, 'E_UNDEF_VAR');
+        }
+        const paraIdx = effectTokens.findIndex(t => t.type === 'PARA');
+        if (paraIdx === -1 || paraIdx === effectTokens.length - 1) {
+          this._addDiag(`Esperado 'para VALOR' na ação 'altere' do botão.`, effectTokens[0], 'E_BOTAO_ACTION');
+        } else {
+          const rest = effectTokens.slice(paraIdx + 1);
+          const seIdx = rest.findIndex(t => t.type === 'SE');
+          if (seIdx !== -1) {
+            this.validateExpr(rest.slice(0, seIdx), 'botao altere');
+            const afterSe = rest.slice(seIdx + 1);
+            const senaoIdx = afterSe.findIndex(t => t.type === 'SENAO');
+            if (senaoIdx !== -1) {
+              this.validateCond(afterSe.slice(0, senaoIdx), 'se');
+              this.validateExpr(afterSe.slice(senaoIdx + 1), 'senao');
+            } else {
+              this.validateCond(afterSe, 'se');
+            }
+          } else {
+            this.validateExpr(rest, 'botao altere');
+          }
+        }
+      } else if (effectTokens[0].type === 'EXECUTE') {
+        const sub = effectTokens.slice(1);
+        if (sub.length > 0 && !['POTENCIA_DE', 'RAIZ_DE', 'ALEATORIO_ENTRE', 'JUROS_COMPOSTOS', 'PERCENTIL_DE', 'TAMANHO_DE'].includes(sub[0].type)) {
+          this.validateExpr(sub, 'botao execute');
+        }
+      }
+    }
+
     this.ast.push({
       type: 'DefineInteractive',
       name: nameToken.value,
@@ -1433,25 +1707,19 @@ class Parser {
   }
 
   parseDefinaFuncao(tokens, nameToken) {
-    // defina NAME como funcao(params) BODY
-    // also: defina NAME como funcao BODY  (no-param shorthand)
-    // interface mode: defina NAME como funcao botao("txt") EFFECT...
-    //                 defina NAME como funcao toggle("txt")
-    //                 defina NAME como funcao slider("txt") min, max
-    //                 defina NAME como funcao seletor("txt") op1, op2...
-    //                 defina NAME como funcao digite
-    //                 defina NAME como funcao pergunte("q")
     let i = 3; // at 'funcao'
     const funcToken = tokens[i]; i++;
 
-    // Interface mode: check for interactive element keyword after FUNCAO
-    if (this._interfaceMode && i <= tokens.length) {
-      const elemToken = tokens[i - 1 + 1] || tokens[i]; // token after funcao
-      const elemT = tokens[i];
-      if (elemT && ['BOTAO', 'TOGGLE', 'SLIDER', 'SELETOR', 'DIGITE', 'PERGUNTE'].includes(elemT.type)) {
-        this._parseDefinaInteractive(tokens, nameToken, elemT);
+    const interactiveTypes = ['BOTAO', 'TOGGLE', 'SLIDER', 'SELETOR', 'DIGITE', 'PERGUNTE'];
+
+    // Check interactive element keyword right after FUNCAO (even without importe interface so we report a clear error)
+    if (i < tokens.length && interactiveTypes.includes(tokens[i].type)) {
+      if (!this._interfaceMode) {
+        this._addDiag(`Elemento interativo '${tokens[i].value}' requer 'importe interface' no início do script.`, tokens[i], 'E_NEED_INTERFACE');
         return;
       }
+      this._parseDefinaInteractive(tokens, nameToken, tokens[i]);
+      return;
     }
 
     // Parse parameters (optional parens)
@@ -1464,35 +1732,31 @@ class Parser {
         } else if (tokens[i].type === 'VIRGULA') {
           // skip
         } else {
-          this.errors.push({
-            message: `Parâmetro inválido em função: '${tokens[i].value}'`,
-            line: tokens[i].line, col: tokens[i].col, length: tokens[i].value.length
-          });
+          this._addDiag(`Parâmetro inválido em função: '${tokens[i].value}'`, tokens[i], 'E_FUNC_PARAM');
         }
         i++;
       }
       if (i < tokens.length && tokens[i].value === ')') {
         i++; // skip )
       } else {
-        this.errors.push({
-          message: `Parêntese ')' esperado na declaração de função`,
-          line: funcToken.line, col: funcToken.col, length: funcToken.value.length
-        });
+        this._addDiag(`Parêntese ')' esperado na declaração de função`, funcToken, 'E_PAREN');
       }
     }
 
-    // Interface mode: also support 'defina X como funcao() botao("...") ...'
-    if (this._interfaceMode && params.length === 0 && i < tokens.length) {
-      const elemT = tokens[i];
-      if (elemT && ['BOTAO', 'TOGGLE', 'SLIDER', 'SELETOR', 'DIGITE', 'PERGUNTE'].includes(elemT.type)) {
-        this._parseDefinaInteractive(tokens, nameToken, elemT);
+    // Support 'defina X como funcao() botao("...") ...'
+    if (params.length === 0 && i < tokens.length && interactiveTypes.includes(tokens[i].type)) {
+      if (!this._interfaceMode) {
+        this._addDiag(`Elemento interativo '${tokens[i].value}' requer 'importe interface' no início do script.`, tokens[i], 'E_NEED_INTERFACE');
         return;
       }
+      this._parseDefinaInteractive(tokens, nameToken, tokens[i]);
+      return;
     }
-    // If no '(' found, params stays [] and body starts from current i
 
-    // Remaining tokens are the function body (can contain multiple statements)
     const bodyTokens = tokens.slice(i);
+    if (bodyTokens.length === 0) {
+      this._addDiag(`Função '${nameToken.value}' precisa de um corpo. Ex: defina ${nameToken.value} como funcao(x) execute x * 2`, funcToken, 'E_FUNC_BODY');
+    }
 
     this.ast.push({
       type: 'DefineFunc',
@@ -1504,36 +1768,39 @@ class Parser {
   }
 
   parseExecute(tokens) {
-    // Various forms:
-    // execute EXPR
-    // execute EXPR se COND
-    // execute EXPR se COND senao EXPR2
-    // execute EXPR repita N vezes
-    // execute potencia de X, Y
-    // execute raiz de X
-    // execute aleatorio entre X e Y
-    // execute aleatorio entre X e Y repita N vezes
-    // execute cor de fundo R G B (interface mode only)
-    
     if (tokens.length < 2) {
-      this.errors.push({
-        message: `'execute' precisa de uma expressão. Ex: execute x + y`,
-        line: tokens[0].line, col: tokens[0].col, length: tokens[0].value.length
-      });
+      this._addDiag(`'execute' precisa de uma expressão. Ex: execute x + y`, tokens[0], 'E_EXEC_EMPTY');
       return;
     }
 
     // Interface mode: execute cor de fundo R G B [se COND [senao [cor de fundo] R2 G2 B2]]
-    if (this._interfaceMode && tokens[1] && tokens[1].type === 'COR_DE_FUNDO') {
+    if (tokens[1] && tokens[1].type === 'COR_DE_FUNDO') {
+      if (!this._interfaceMode) {
+        this._addDiag(`'execute cor de fundo' requer 'importe interface' no início do script.`, tokens[1], 'E_NEED_INTERFACE');
+        return;
+      }
       const seIdxBg = tokens.findIndex((t, idx) => idx >= 2 && t.type === 'SE');
+      const parseSignedNums = (slice) => {
+        const res = [];
+        for (let k = 0; k < slice.length; k++) {
+          if (slice[k].type === 'OPERATOR' && slice[k].value === '-' && slice[k + 1]?.type === 'NUMBER') {
+            res.push(-Number(slice[k + 1].value));
+            k++;
+          } else if (slice[k].type === 'NUMBER') {
+            res.push(Number(slice[k].value));
+          }
+        }
+        return res;
+      };
       if (seIdxBg !== -1) {
-        const nums = tokens.slice(2, seIdxBg).filter(t => t.type === 'NUMBER').map(t => Number(t.value));
+        const nums = parseSignedNums(tokens.slice(2, seIdxBg));
+        this._validateRgbNumbers(nums, tokens[1], 'cor de fundo');
         const afterSe = tokens.slice(seIdxBg + 1);
         const senaoIdxBg = afterSe.findIndex(t => t.type === 'SENAO');
         const condTokens = senaoIdxBg !== -1 ? afterSe.slice(0, senaoIdxBg) : afterSe;
-        const elseNums = senaoIdxBg !== -1
-          ? afterSe.slice(senaoIdxBg + 1).filter(t => t.type === 'NUMBER').map(t => Number(t.value))
-          : null;
+        this.validateCond(condTokens, 'se');
+        const elseNums = senaoIdxBg !== -1 ? parseSignedNums(afterSe.slice(senaoIdxBg + 1)) : null;
+        if (elseNums) this._validateRgbNumbers(elseNums, afterSe[senaoIdxBg], 'senao cor de fundo');
         this.ast.push({
           type: 'ExecuteCorDeFundo',
           r: nums[0] ?? 0,
@@ -1545,7 +1812,8 @@ class Parser {
         });
         return;
       }
-      const nums = tokens.slice(2).filter(t => t.type === 'NUMBER').map(t => Number(t.value));
+      const nums = parseSignedNums(tokens.slice(2));
+      this._validateRgbNumbers(nums, tokens[1], 'cor de fundo');
       this.ast.push({
         type: 'ExecuteCorDeFundo',
         r: nums[0] ?? 0,
@@ -1556,9 +1824,47 @@ class Parser {
       return;
     }
 
-    // Interface mode: execute cor de texto R G B
-    if (this._interfaceMode && tokens[1] && tokens[1].type === 'COR_DE_TEXTO') {
-      const nums = tokens.slice(2).filter(t => t.type === 'NUMBER').map(t => Number(t.value));
+    // Interface mode: execute cor de texto R G B [se COND [senao [cor de texto] R2 G2 B2]]
+    if (tokens[1] && tokens[1].type === 'COR_DE_TEXTO') {
+      if (!this._interfaceMode) {
+        this._addDiag(`'execute cor de texto' requer 'importe interface' no início do script.`, tokens[1], 'E_NEED_INTERFACE');
+        return;
+      }
+      const parseSignedNums = (slice) => {
+        const res = [];
+        for (let k = 0; k < slice.length; k++) {
+          if (slice[k].type === 'OPERATOR' && slice[k].value === '-' && slice[k + 1]?.type === 'NUMBER') {
+            res.push(-Number(slice[k + 1].value));
+            k++;
+          } else if (slice[k].type === 'NUMBER') {
+            res.push(Number(slice[k].value));
+          }
+        }
+        return res;
+      };
+      const seIdxTxt = tokens.findIndex((t, idx) => idx >= 2 && t.type === 'SE');
+      if (seIdxTxt !== -1) {
+        const nums = parseSignedNums(tokens.slice(2, seIdxTxt));
+        this._validateRgbNumbers(nums, tokens[1], 'cor de texto');
+        const afterSe = tokens.slice(seIdxTxt + 1);
+        const senaoIdxTxt = afterSe.findIndex(t => t.type === 'SENAO');
+        const condTokens = senaoIdxTxt !== -1 ? afterSe.slice(0, senaoIdxTxt) : afterSe;
+        this.validateCond(condTokens, 'se');
+        const elseNums = senaoIdxTxt !== -1 ? parseSignedNums(afterSe.slice(senaoIdxTxt + 1)) : null;
+        if (elseNums) this._validateRgbNumbers(elseNums, afterSe[senaoIdxTxt], 'senao cor de texto');
+        this.ast.push({
+          type: 'ExecuteCorDeTexto',
+          r: nums[0] ?? 226,
+          g: nums[1] ?? 232,
+          b: nums[2] ?? 240,
+          condTokens,
+          elseRgb: elseNums && elseNums.length >= 3 ? { r: elseNums[0], g: elseNums[1], b: elseNums[2] } : null,
+          line: tokens[0].line
+        });
+        return;
+      }
+      const nums = parseSignedNums(tokens.slice(2));
+      this._validateRgbNumbers(nums, tokens[1], 'cor de texto');
       this.ast.push({
         type: 'ExecuteCorDeTexto',
         r: nums[0] ?? 226,
@@ -1784,8 +2090,12 @@ class Parser {
   }
 
   parseExecutePotencia(tokens) {
-    // execute potencia de X, Y
     const args = tokens.slice(2);
+    if (args.length === 0) {
+      this._addDiag(`'potencia de' precisa de base e expoente. Ex: execute potencia de 2, 8`, tokens[1], 'E_MATH_ARGS');
+    } else {
+      this.validateExpr(args, 'potencia de');
+    }
     this.ast.push({
       type: 'ExecuteMath',
       op: 'potencia',
@@ -1795,8 +2105,12 @@ class Parser {
   }
 
   parseExecuteRaiz(tokens) {
-    // execute raiz de X
     const args = tokens.slice(2);
+    if (args.length === 0) {
+      this._addDiag(`'raiz de' precisa de um valor. Ex: execute raiz de 144`, tokens[1], 'E_MATH_ARGS');
+    } else {
+      this.validateExpr(args, 'raiz de');
+    }
     this.ast.push({
       type: 'ExecuteMath',
       op: 'raiz',
@@ -1806,18 +2120,16 @@ class Parser {
   }
 
   parseExecuteAleatorio(tokens) {
-    // execute aleatorio entre X e Y
     const args = tokens.slice(2);
-    // Find 'e' token
     let eIdx = -1;
     for (let j = 0; j < args.length; j++) {
       if (args[j].type === 'E_CONJ') { eIdx = j; break; }
     }
     if (eIdx === -1) {
-      this.errors.push({
-        message: `Esperado 'e' em 'aleatorio entre X e Y'`,
-        line: tokens[1].line, col: tokens[1].col, length: tokens[1].value.length
-      });
+      this._addDiag(`Esperado 'e' em 'aleatorio entre X e Y'`, tokens[1], 'E_MATH_ARGS');
+    } else {
+      this.validateExpr(args.slice(0, eIdx), 'aleatorio entre');
+      this.validateExpr(args.slice(eIdx + 1), 'aleatorio entre');
     }
     this.ast.push({
       type: 'ExecuteMath',
@@ -1829,17 +2141,11 @@ class Parser {
   }
 
   parseExecuteJurosCompostos(tokens) {
-    // execute juros compostos(taxa, n) or juros compostos(taxa, n, montante)
-    // tokens[1] = JUROS_COMPOSTOS, tokens[2] = '(', ...args..., ')'
     const parenOpen = tokens[2];
     if (!parenOpen || parenOpen.type !== 'PAREN' || parenOpen.value !== '(') {
-      this.errors.push({
-        message: `'juros compostos' requer parênteses: juros compostos(taxa, periodos) ou juros compostos(taxa, periodos, montante)`,
-        line: tokens[1].line, col: tokens[1].col, length: tokens[1].value.length
-      });
+      this._addDiag(`'juros compostos' requer parênteses: juros compostos(taxa, periodos) ou juros compostos(taxa, periodos, montante)`, tokens[1], 'E_MATH_ARGS');
       return;
     }
-    // Collect tokens inside parens
     let depth = 1, i = 3;
     const innerTokens = [];
     while (i < tokens.length && depth > 0) {
@@ -1851,7 +2157,6 @@ class Parser {
       innerTokens.push(tokens[i]);
       i++;
     }
-    // Split by root-level commas
     const args = [];
     let cur = [], d = 0;
     for (const t of innerTokens) {
@@ -1863,19 +2168,14 @@ class Parser {
     if (cur.length) args.push(cur);
 
     if (args.length < 2) {
-      this.errors.push({
-        message: `'juros compostos' requer pelo menos 2 argumentos: taxa e períodos`,
-        line: tokens[1].line, col: tokens[1].col, length: tokens[1].value.length
-      });
+      this._addDiag(`'juros compostos' requer pelo menos 2 argumentos: taxa e períodos`, tokens[1], 'E_ARITY');
       return;
     }
     if (args.length > 3) {
-      this.errors.push({
-        message: `'juros compostos' aceita no máximo 3 argumentos: taxa, períodos e montante opcional`,
-        line: tokens[1].line, col: tokens[1].col, length: tokens[1].value.length
-      });
+      this._addDiag(`'juros compostos' aceita no máximo 3 argumentos: taxa, períodos e montante opcional`, tokens[1], 'E_ARITY');
       return;
     }
+    for (const a of args) this.validateExpr(a, 'juros compostos');
 
     this.ast.push({
       type: 'ExecuteMath',
@@ -1888,10 +2188,7 @@ class Parser {
   }
 
   parseExecutePercentilDe(tokens) {
-    // execute percentil de OBJ/ARRAY, PERCENTIL
-    // tokens[0]=EXECUTE, tokens[1]=PERCENTIL_DE, tokens[2..]=rest split by root VIRGULA
     const rest = tokens.slice(2);
-    // Split by first root-level VIRGULA
     let commaIdx = -1, depth = 0;
     for (let i = 0; i < rest.length; i++) {
       if (rest[i].type === 'PAREN' && rest[i].value === '(') depth++;
@@ -1899,25 +2196,29 @@ class Parser {
       else if (rest[i].type === 'VIRGULA' && depth === 0) { commaIdx = i; break; }
     }
     if (commaIdx === -1) {
-      this.errors.push({ message: `'percentil de' requer dois argumentos: percentil de DADOS, PERCENTIL (ex: 50 para mediana)`, line: tokens[1].line, col: tokens[1].col, length: tokens[1].value.length });
+      this._addDiag(`'percentil de' requer dois argumentos: percentil de DADOS, PERCENTIL (ex: 50 para mediana)`, tokens[1], 'E_ARITY');
       return;
     }
+    const dataTokens = rest.slice(0, commaIdx);
+    const pTokens = rest.slice(commaIdx + 1);
+    this.validateExpr(dataTokens, 'percentil de');
+    this.validateExpr(pTokens, 'percentil de');
     this.ast.push({
       type: 'ExecuteMath',
       op: 'percentil_de',
-      dataTokens: rest.slice(0, commaIdx),
-      pTokens: rest.slice(commaIdx + 1),
+      dataTokens,
+      pTokens,
       line: tokens[0].line
     });
   }
 
   parseExecuteTamanhoDe(tokens) {
-    // execute tamanho de ARRAY/OBJ
     const srcTokens = tokens.slice(2);
     if (srcTokens.length === 0) {
-      this.errors.push({ message: `'tamanho de' requer um array ou objeto`, line: tokens[1].line, col: tokens[1].col, length: tokens[1].value.length });
+      this._addDiag(`'tamanho de' requer um array ou objeto`, tokens[1], 'E_MATH_ARGS');
       return;
     }
+    this.validateExpr(srcTokens, 'tamanho de');
     this.ast.push({
       type: 'ExecuteMath',
       op: 'tamanho_de',
@@ -1927,15 +2228,12 @@ class Parser {
   }
 
   parseExecuteLoop(tokens) {
-    // execute loop(INIT, COND, INCR) BODY...
-    // tokens[0]=EXECUTE, tokens[1]=LOOP, tokens[2]='('
     const loopToken = tokens[1];
     if (!tokens[2] || tokens[2].type !== 'PAREN' || tokens[2].value !== '(') {
-      this.errors.push({ message: `'loop' requer parênteses: loop(inicio, condicao, incremento)`, line: loopToken.line, col: loopToken.col, length: loopToken.value.length });
+      this._addDiag(`'loop' requer parênteses: loop(inicio, condicao, incremento)`, loopToken, 'E_LOOP_SYNTAX');
       return;
     }
 
-    // Collect tokens inside the parens, split by root-level commas
     let depth = 1, i = 3;
     const inner = [];
     while (i < tokens.length && depth > 0) {
@@ -1945,7 +2243,6 @@ class Parser {
       i++;
     }
 
-    // Split inner by root-level commas → [initTokens, condTokens, incrTokens]
     const args = [];
     let cur = [], d = 0;
     for (const t of inner) {
@@ -1957,12 +2254,19 @@ class Parser {
     if (cur.length) args.push(cur);
 
     if (args.length !== 3) {
-      this.errors.push({ message: `'loop' requer exatamente 3 argumentos: loop(inicio, condicao, incremento)`, line: loopToken.line, col: loopToken.col, length: loopToken.value.length });
+      this._addDiag(`'loop' requer exatamente 3 argumentos: loop(inicio, condicao, incremento)`, loopToken, 'E_LOOP_SYNTAX');
       return;
     }
 
-    // Body tokens = everything after the closing ')'
+    const loopScope = new Set(['i']);
+    this.validateExpr(args[0], 'loop inicio', loopScope);
+    this.validateCond(args[1], 'loop condicao', loopScope);
+    this.validateExpr(args[2], 'loop incremento', loopScope);
+
     const bodyTokens = tokens.slice(i);
+    if (bodyTokens.length === 0) {
+      this._addDiag(`'loop' precisa de um comando no corpo. Ex: execute loop(1, i <= 5, i + 1) execute i`, loopToken, 'E_LOOP_SYNTAX');
+    }
 
     this.ast.push({
       type: 'ExecuteLoop',
@@ -1975,27 +2279,27 @@ class Parser {
   }
 
   parseExecuteAmostras(tokens, comIdx) {
-    // execute EXPR com N amostras
     const exprTokens = tokens.slice(1, comIdx);
     const afterCom = tokens.slice(comIdx + 1);
 
-    // Find AMOSTRAS token
     const amostrasIdx = afterCom.findIndex(t => t.type === 'AMOSTRAS');
     if (amostrasIdx === -1) {
-      this.errors.push({ message: `'com' requer 'amostras' ao final: execute EXPR com N amostras`, line: tokens[comIdx].line, col: tokens[comIdx].col, length: tokens[comIdx].value.length });
+      this._addDiag(`'com' requer 'amostras' ao final: execute EXPR com N amostras`, tokens[comIdx], 'E_AMOSTRAS_SYNTAX');
       return;
     }
 
     const nTokens = afterCom.slice(0, amostrasIdx);
     if (nTokens.length === 0) {
-      this.errors.push({ message: `Esperado número de amostras entre 'com' e 'amostras'`, line: tokens[comIdx].line, col: tokens[comIdx].col, length: tokens[comIdx].value.length });
+      this._addDiag(`Esperado número de amostras entre 'com' e 'amostras'`, tokens[comIdx], 'E_AMOSTRAS_SYNTAX');
       return;
     }
 
     if (exprTokens.length === 0) {
-      this.errors.push({ message: `'execute ... com amostras' requer uma expressão antes de 'com'`, line: tokens[0].line, col: tokens[0].col, length: tokens[0].value.length });
+      this._addDiag(`'execute ... com amostras' requer uma expressão antes de 'com'`, tokens[0], 'E_AMOSTRAS_SYNTAX');
       return;
     }
+
+    this.validateExpr(nTokens, 'amostras');
 
     this.ast.push({
       type: 'ExecuteAmostras',
@@ -2034,58 +2338,69 @@ class Parser {
 
     if (emIdx !== -1) {
       exprTokens = tokens.slice(1, emIdx);
+      if (exprTokens.length === 0) {
+        this._addDiag(`Esperado uma expressão antes de 'em'. Ex: apresente "Olá" em destaque`, tokens[emIdx], 'E_APRESENTE_EXPR');
+      }
       const formatToken = tokens[emIdx + 1];
-
-      if (formatToken && (formatToken.type === 'TABELA' || formatToken.type === 'GRAFICO')) {
+      if (!formatToken) {
+        this._addDiag(`Esperado um formato após 'em'. Use: texto, destaque, apresentação, dados, tabela, grafico, estatisticas ou cientifica.`, tokens[emIdx], 'E_APRESENTE_FMT');
+      } else if (formatToken.type === 'TABELA' || formatToken.type === 'GRAFICO') {
         format = formatToken.type === 'TABELA' ? 'tabela' : 'grafico';
 
-        // Extract x name from exprTokens (first IDENTIFIER)
         const xIdent = exprTokens.find(t => t.type === 'IDENTIFIER');
         xName = xIdent ? xIdent.value : 'x';
 
-        // Extract y tokens from inside the parens after tabela/grafico — optional
-        let i = emIdx + 2; // points to potential '('
+        let i = emIdx + 2;
         if (i < tokens.length && tokens[i].type === 'PAREN' && tokens[i].value === '(') {
-          i++; // skip '('
-          let depth = 1;
+          i++;
+          let d2 = 1;
           yExprTokens = [];
-          while (i < tokens.length && depth > 0) {
-            if (tokens[i].type === 'PAREN' && tokens[i].value === '(') depth++;
+          while (i < tokens.length && d2 > 0) {
+            if (tokens[i].type === 'PAREN' && tokens[i].value === '(') d2++;
             if (tokens[i].type === 'PAREN' && tokens[i].value === ')') {
-              depth--;
-              if (depth === 0) break;
+              d2--;
+              if (d2 === 0) break;
             }
             yExprTokens.push(tokens[i]);
             i++;
           }
-          // Extract y name
           const yIdent = yExprTokens.find(t => t.type === 'IDENTIFIER');
           yName = yIdent ? yIdent.value : 'y';
         }
-        // If no '(' found — single-object mode, yExprTokens stays null
-      } else if (formatToken && formatToken.type === 'ESTATISTICAS') {
+      } else if (formatToken.type === 'ESTATISTICAS') {
         format = 'estatisticas';
         const xIdent = exprTokens.find(t => t.type === 'IDENTIFIER');
         xName = xIdent ? xIdent.value : 'obj';
-      } else if (formatToken && formatToken.type === 'CIENTIFICA') {
+      } else if (formatToken.type === 'CIENTIFICA') {
         format = 'cientifica';
-      } else if (formatToken && formatToken.type === 'SPRITE' && this._interfaceMode) {
+      } else if (formatToken.type === 'SPRITE') {
+        if (!this._interfaceMode) {
+          this._addDiag(`Formato 'sprite' requer 'importe interface' no início do script.`, formatToken, 'E_NEED_INTERFACE');
+        }
         format = 'sprite';
-      } else if (formatToken && ['BOTAO', 'TOGGLE', 'SLIDER', 'SELETOR', 'DIGITE', 'PERGUNTE'].includes(formatToken.type) && this._interfaceMode) {
+      } else if (['BOTAO', 'TOGGLE', 'SLIDER', 'SELETOR', 'DIGITE', 'PERGUNTE'].includes(formatToken.type)) {
+        if (!this._interfaceMode) {
+          this._addDiag(`Formato '${formatToken.value}' requer 'importe interface' no início do script.`, formatToken, 'E_NEED_INTERFACE');
+        }
         format = formatToken.type.toLowerCase();
-      } else if (formatToken) {
+      } else {
         const f = formatToken.value.toLowerCase();
         if (['texto', 'destaque', 'apresentação', 'apresentacao', 'dados'].includes(f)) {
           format = f === 'apresentacao' ? 'apresentação' : f;
         } else {
-          this.errors.push({
-            message: `Formato desconhecido: '${formatToken.value}'. Use: texto, destaque, apresentação, dados, tabela() ou grafico()`,
-            line: formatToken.line, col: formatToken.col, length: formatToken.value.length
-          });
+          this._addDiag(
+            `Formato desconhecido: '${formatToken.value}'. Use: texto, destaque, apresentação, dados, tabela, grafico, estatisticas ou cientifica.`,
+            formatToken,
+            'E_APRESENTE_FMT'
+          );
         }
       }
     } else {
-      // Strip trailing yellow modifiers (ajuste/grid/cor de texto) if present without 'em'
+      // Detect interface modifiers used without importe interface
+      const ifaceMod = tokens.find(t => t.type === 'AJUSTE' || t.type === 'GRID' || t.type === 'COR_DE_TEXTO');
+      if (ifaceMod && !this._interfaceMode) {
+        this._addDiag(`Modificador '${ifaceMod.value}' requer 'importe interface' no início do script.`, ifaceMod, 'E_NEED_INTERFACE');
+      }
       let endIdx = tokens.length;
       if (this._interfaceMode) {
         let d = 0;
@@ -2099,6 +2414,14 @@ class Parser {
         }
       }
       exprTokens = tokens.slice(1, endIdx);
+    }
+
+    // Also catch ajuste/grid/cor de texto after 'em FORMATO' when not in interface mode
+    if (!this._interfaceMode && emIdx !== -1) {
+      const ifaceMod = tokens.slice(emIdx + 1).find(t => t.type === 'AJUSTE' || t.type === 'GRID' || t.type === 'COR_DE_TEXTO');
+      if (ifaceMod) {
+        this._addDiag(`Modificador '${ifaceMod.value}' requer 'importe interface' no início do script.`, ifaceMod, 'E_NEED_INTERFACE');
+      }
     }
 
     // Extract yellow (interface) modifiers: ajuste, grid, cor de texto
@@ -2118,49 +2441,81 @@ class Parser {
       line: tokens[0].line
     });
 
-    // Validate expressions
     if (exprTokens && exprTokens.length > 0) this.validateExpr(exprTokens, 'apresente');
     if (yExprTokens && yExprTokens.length > 0) this.validateExpr(yExprTokens, 'tabela/grafico argumento');
   } // end parseApresente
 
   // Extract yellow interface modifiers from a token line
-  // Modifiers: ajuste POS TAM | grid X Y W H | cor de texto R G B
+  // Modifiers: ajuste POS TAM | grid X Y [W H] | cor de texto R G B
   _parseYellowModifiers(tokens) {
     const yellow = {};
     const ajusteIdx = tokens.findIndex(t => t.type === 'AJUSTE');
     const gridIdx   = tokens.findIndex(t => t.type === 'GRID');
     const corTextoIdx = tokens.findIndex(t => t.type === 'COR_DE_TEXTO');
 
+    const VALID_POS = new Set(['esquerda', 'centroesquerda', 'centro', 'centrodireita', 'direita']);
+    const VALID_TAM = new Set(['ppp', 'pp', 'p', 'm', 'g', 'gg', 'ggg']);
+
     if (ajusteIdx !== -1) {
-      // ajuste POSICAO TAMANHO — both are IDENTIFIERs
       const posToken = tokens[ajusteIdx + 1];
       const tamToken = tokens[ajusteIdx + 2];
+      const pos = posToken ? posToken.value.toLowerCase() : 'centro';
+      const tam = tamToken ? tamToken.value.toLowerCase() : 'm';
+      if (!posToken || !VALID_POS.has(pos)) {
+        this._addDiag(
+          `Posição inválida em 'ajuste': '${posToken?.value || ''}'. Use: esquerda, centroesquerda, centro, centrodireita ou direita.`,
+          posToken || tokens[ajusteIdx],
+          'E_AJUSTE_INVALID'
+        );
+      }
+      if (!tamToken || !VALID_TAM.has(tam)) {
+        this._addDiag(
+          `Tamanho inválido em 'ajuste': '${tamToken?.value || ''}'. Use: ppp, pp, p, m, g, gg ou ggg.`,
+          tamToken || tokens[ajusteIdx],
+          'E_AJUSTE_INVALID'
+        );
+      }
       yellow.ajuste = {
-        pos: posToken ? posToken.value.toLowerCase() : 'centro',
-        tam: tamToken ? tamToken.value.toLowerCase() : 'm',
+        pos: VALID_POS.has(pos) ? pos : 'centro',
+        tam: VALID_TAM.has(tam) ? tam : 'm',
       };
     }
 
     if (gridIdx !== -1) {
-      // grid X Y W H — four numbers
       const nums = [];
       for (let i = gridIdx + 1; i < tokens.length && nums.length < 4; i++) {
+        if (tokens[i].type === 'AJUSTE' || tokens[i].type === 'COR_DE_TEXTO') break;
         if (tokens[i].type === 'NUMBER') nums.push(Number(tokens[i].value));
       }
-      yellow.grid = {
-        x: nums[0] ?? 50,
-        y: nums[1] ?? 50,
-        w: nums[2] ?? 40,
-        h: nums[3] ?? 10,
-      };
+      if (nums.length < 2) {
+        this._addDiag(`'grid' exige pelo menos coluna e linha (ex: grid 2 3 4 2 ou grid(2, 3)).`, tokens[gridIdx], 'E_GRID_ARGS');
+      } else {
+        const x = nums[0];
+        const y = nums[1];
+        const is2Arg12Col = nums.length === 2 && x >= 1 && x <= 12 && y >= 1 && y <= 12;
+        const w = nums[2] ?? (is2Arg12Col ? 4 : 40);
+        const h = nums[3] ?? (is2Arg12Col ? 2 : 12);
+        if (x < 0 || y < 0 || x > 100 || y > 100) {
+          this._addDiag(`Coordenadas de 'grid' fora do intervalo permitido (1..12 ou 0..100%).`, tokens[gridIdx], 'E_GRID_ARGS');
+        }
+        if (w <= 0 || h <= 0) {
+          this._addDiag(`Largura e altura em 'grid' devem ser maiores que zero.`, tokens[gridIdx], 'E_GRID_ARGS');
+        }
+        yellow.grid = { x, y, w, h };
+      }
     }
 
     if (corTextoIdx !== -1) {
       const nums = [];
       for (let i = corTextoIdx + 1; i < tokens.length && nums.length < 3; i++) {
-        if (tokens[i].type === 'NUMBER') nums.push(Number(tokens[i].value));
+        if (tokens[i].type === 'OPERATOR' && tokens[i].value === '-' && tokens[i + 1]?.type === 'NUMBER') {
+          nums.push(-Number(tokens[i + 1].value));
+          i++;
+        } else if (tokens[i].type === 'NUMBER') {
+          nums.push(Number(tokens[i].value));
+        }
       }
-      if (nums.length === 3) {
+      if (this._validateRgbNumbers(nums, tokens[corTextoIdx], 'cor de texto')) {
         yellow.corTexto = { r: nums[0], g: nums[1], b: nums[2] };
       }
     }
@@ -2213,81 +2568,78 @@ class Parser {
 
   parseSalve(tokens) {
     // salve local v1, v2, v3
-    // salve nuvem v1, v2, v3
-    // salve nuvem v1, v2 usando chave
     if (tokens.length < 2) {
-      this.errors.push({ message: `'salve' precisa de 'local' ou 'nuvem'. Ex: salve local x`, line: tokens[0].line, col: tokens[0].col, length: tokens[0].value.length });
+      this._addDiag(`'salve' precisa de 'local'. Ex: salve local x`, tokens[0], 'E_SALVE_SYNTAX');
       return;
     }
     const destToken = tokens[1];
-    if (destToken.type !== 'LOCAL' && destToken.type !== 'NUVEM') {
-      this.errors.push({ message: `'salve' requer 'local' ou 'nuvem' após o comando. Ex: salve local x`, line: destToken.line, col: destToken.col, length: destToken.value.length });
+    if (destToken.type === 'NUVEM') {
+      this._addDiag(
+        `Armazenamento em nuvem ('salve nuvem') não está disponível neste ambiente. Use 'salve local' para salvar os dados no navegador.`,
+        destToken,
+        'E_CLOUD_UNAVAILABLE'
+      );
       return;
     }
-    const dest = destToken.type === 'LOCAL' ? 'local' : 'nuvem';
+    if (destToken.type !== 'LOCAL') {
+      this._addDiag(`'salve' requer 'local' após o comando. Ex: salve local x`, destToken, 'E_SALVE_SYNTAX');
+      return;
+    }
 
-    // Find USANDO token
-    const usandoIdx = tokens.findIndex(t => t.type === 'USANDO');
-    const varTokens = tokens.slice(2, usandoIdx === -1 ? tokens.length : usandoIdx);
+    const varTokens = tokens.slice(2);
     const varNames = varTokens.filter(t => t.type === 'IDENTIFIER').map(t => t.value);
 
     if (varNames.length === 0) {
-      this.errors.push({ message: `'salve ${dest}' requer pelo menos uma variável. Ex: salve ${dest} x`, line: destToken.line, col: destToken.col, length: destToken.value.length });
+      this._addDiag(`'salve local' requer pelo menos uma variável. Ex: salve local x`, destToken, 'E_SALVE_SYNTAX');
       return;
     }
 
-    let usingKey = null;
-    if (usandoIdx !== -1 && dest === 'nuvem') {
-      const keyToken = tokens[usandoIdx + 1];
-      if (keyToken && (keyToken.type === 'IDENTIFIER' || keyToken.type === 'STRING')) {
-        usingKey = keyToken.type === 'STRING' ? keyToken.value : keyToken.value;
+    for (const name of varNames) {
+      if (!this.declaredVars.has(name)) {
+        const t = varTokens.find(tk => tk.value === name);
+        this._addDiag(`'salve local' requer variável declarada com 'defina': '${name}' não foi declarado.`, t || tokens[0], 'E_UNDEF_VAR');
       }
     }
 
-    this.ast.push({ type: dest === 'local' ? 'SalveLocal' : 'SalveNuvem', vars: varNames, usingKey, line: tokens[0].line });
+    this.ast.push({ type: 'SalveLocal', vars: varNames, usingKey: null, line: tokens[0].line });
   }
 
   parseCarregue(tokens) {
     // carregue local v1, v2, v3
-    // carregue nuvem v1, v2
-    // carregue nuvem v1 usando chave
     if (tokens.length < 2) {
-      this.errors.push({ message: `'carregue' precisa de 'local' ou 'nuvem'. Ex: carregue local x`, line: tokens[0].line, col: tokens[0].col, length: tokens[0].value.length });
+      this._addDiag(`'carregue' precisa de 'local'. Ex: carregue local x`, tokens[0], 'E_CARREGUE_SYNTAX');
       return;
     }
     const destToken = tokens[1];
-    if (destToken.type !== 'LOCAL' && destToken.type !== 'NUVEM') {
-      this.errors.push({ message: `'carregue' requer 'local' ou 'nuvem' após o comando. Ex: carregue local x`, line: destToken.line, col: destToken.col, length: destToken.value.length });
+    if (destToken.type === 'NUVEM') {
+      this._addDiag(
+        `Armazenamento em nuvem ('carregue nuvem') não está disponível neste ambiente. Use 'carregue local' para restaurar dados salvos no navegador.`,
+        destToken,
+        'E_CLOUD_UNAVAILABLE'
+      );
       return;
     }
-    const dest = destToken.type === 'LOCAL' ? 'local' : 'nuvem';
+    if (destToken.type !== 'LOCAL') {
+      this._addDiag(`'carregue' requer 'local' após o comando. Ex: carregue local x`, destToken, 'E_CARREGUE_SYNTAX');
+      return;
+    }
 
-    const usandoIdx = tokens.findIndex(t => t.type === 'USANDO');
-    const varTokens = tokens.slice(2, usandoIdx === -1 ? tokens.length : usandoIdx);
+    const varTokens = tokens.slice(2);
     const varNames = varTokens.filter(t => t.type === 'IDENTIFIER').map(t => t.value);
 
     if (varNames.length === 0) {
-      this.errors.push({ message: `'carregue ${dest}' requer pelo menos uma variável. Ex: carregue ${dest} x`, line: destToken.line, col: destToken.col, length: destToken.value.length });
+      this._addDiag(`'carregue local' requer pelo menos uma variável. Ex: carregue local x`, destToken, 'E_CARREGUE_SYNTAX');
       return;
     }
 
-    // Validate: variables must be declared
     for (const name of varNames) {
       if (!this.declaredVars.has(name)) {
         const t = varTokens.find(tk => tk.value === name);
-        this.errors.push({ message: `'carregue' requer que a variável já tenha sido declarada com 'defina': '${name}' não foi declarado`, line: t?.line ?? tokens[0].line, col: t?.col ?? tokens[0].col, length: name.length });
+        this._addDiag(`'carregue local' requer que a variável já tenha sido declarada com 'defina': '${name}' não foi declarado.`, t || tokens[0], 'E_UNDEF_VAR');
       }
     }
 
-    let usingKey = null;
-    if (usandoIdx !== -1 && dest === 'nuvem') {
-      const keyToken = tokens[usandoIdx + 1];
-      if (keyToken && (keyToken.type === 'IDENTIFIER' || keyToken.type === 'STRING')) {
-        usingKey = keyToken.value;
-      }
-    }
-
-    this.ast.push({ type: dest === 'local' ? 'CarregueLocal' : 'CarregueNuvem', vars: varNames, usingKey, line: tokens[0].line });
+    this.ast.push({ type: 'CarregueLocal', vars: varNames, usingKey: null, line: tokens[0].line });
   }
 } // end Parser
 
@@ -3301,6 +3653,13 @@ class Transpiler {
   }
 
   transpileExecuteCorDeTexto(node) {
+    if (node.condTokens) {
+      const cond = this.tokensToExpr(node.condTokens);
+      if (node.elseRgb) {
+        return `if (${cond}) { __iface_output.push({ type: 'corDeTexto', r: ${node.r}, g: ${node.g}, b: ${node.b} }); } else { __iface_output.push({ type: 'corDeTexto', r: ${node.elseRgb.r}, g: ${node.elseRgb.g}, b: ${node.elseRgb.b} }); }`;
+      }
+      return `if (${cond}) { __iface_output.push({ type: 'corDeTexto', r: ${node.r}, g: ${node.g}, b: ${node.b} }); }`;
+    }
     return `__iface_output.push({ type: 'corDeTexto', r: ${node.r}, g: ${node.g}, b: ${node.b} });`;
   }
 
@@ -3393,40 +3752,21 @@ class Transpiler {
     return lines.join('\n');
   }
 
-  // ==================== salve/carregue nuvem ====================
+  // ==================== salve/carregue nuvem (desativado) ====================
   transpileSalveNuvem(node) {
-    const keyExpr = node.usingKey
-      ? JSON.stringify(node.usingKey)
-      : `(typeof localStorage !== 'undefined' && localStorage.getItem('crabcode_cloud_key')) || 'crabcode-default'`;
-    const bodyObj = '{' + node.vars.map(v => `"${v}": ${v}`).join(', ') + '}';
-    return `await (async function(){
-  try {
-    const __ck = encodeURIComponent(${keyExpr});
-    await fetch('${CRABCODE_CLOUD_URL}' + '/save/' + __ck, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(${bodyObj})
+    this.errors.push({
+      message: `Armazenamento em nuvem ('salve nuvem') não está disponível. Use 'salve local'.`,
+      line: node.line, col: 1, length: 5, severity: 'error', code: 'E_CLOUD_UNAVAILABLE'
     });
-  } catch(__e) {}
-})();`;
+    return '';
   }
 
   transpileCarregueNuvem(node) {
-    const keyExpr = node.usingKey
-      ? JSON.stringify(node.usingKey)
-      : `(typeof localStorage !== 'undefined' && localStorage.getItem('crabcode_cloud_key')) || 'crabcode-default'`;
-    const sync = this._interfaceMode ? (v) => ` __state[${JSON.stringify(v)}] = ${v};` : () => '';
-    const assignLines = node.vars.map(v =>
-      `if (__d && __d["${v}"] !== undefined) { ${v} = __d["${v}"];${sync(v)} }`
-    ).join(' ');
-    return `await (async function(){
-  try {
-    const __ck = encodeURIComponent(${keyExpr});
-    const __r = await fetch('${CRABCODE_CLOUD_URL}' + '/load/' + __ck);
-    const __d = await __r.json();
-    ${assignLines}
-  } catch(__e) {}
-})();`;
+    this.errors.push({
+      message: `Armazenamento em nuvem ('carregue nuvem') não está disponível. Use 'carregue local'.`,
+      line: node.line, col: 1, length: 8, severity: 'error', code: 'E_CLOUD_UNAVAILABLE'
+    });
+    return '';
   }
 
   transpileApresente(node) {
@@ -3664,7 +4004,7 @@ const CrabLibRegistry = {
         { name: 'defina X como sprite reto(pontos) com cor R G B', params: '...', desc: 'Polígono SVG por pontos normalizados 0–100' },
         { name: 'defina X como sprite curvo(raio) com cor R G B', params: 'raio', desc: 'Círculo SVG com raio 1–50' },
         { name: 'defina X como sprite "chave"', params: 'chave', desc: 'Imagem de pixel art criada na aba Imagens' },
-        { name: 'defina X como funcao botao("label") execute EXPR', params: '...', desc: 'Botão clicável. .valor = resultado da última execução' },
+        { name: 'defina X como funcao botao("label") altere Y para EXPR', params: '...', desc: 'Botão clicável que altera variáveis de estado (ou usa execute EXPR)' },
         { name: 'defina X como funcao toggle("label")', params: 'label', desc: 'Interruptor on/off. .valor = verdadeiro/falso' },
         { name: 'defina X como funcao slider("label", MIN, MAX)', params: 'label, min, max', desc: 'Controle deslizante. .valor = número atual' },
         { name: 'defina X como funcao seletor("label", op1, op2...)', params: '...', desc: 'Lista de opções. .valor = opção selecionada' },
@@ -3672,13 +4012,11 @@ const CrabLibRegistry = {
         { name: 'defina X como funcao pergunte("pergunta")', params: 'pergunta', desc: 'Prompt com OK. .valor = resposta confirmada' },
         { name: 'tecla.valor', params: '', desc: 'Última tecla pressionada (persiste entre execuções)' },
         { name: 'tecla.atual', params: '', desc: 'Tecla deste frame. Limpa após cada re-execução' },
-        { name: 'salve local X', params: 'X', desc: 'Grava X em localStorage' },
-        { name: 'carregue local X', params: 'X', desc: 'Lê X de localStorage' },
-        { name: 'salve nuvem X usando "chave"', params: 'X, chave', desc: 'POST valor para a API CrabCode em nuvem' },
-        { name: 'carregue nuvem X usando "chave"', params: 'X, chave', desc: 'GET valor da API CrabCode em nuvem' },
+        { name: 'salve local X', params: 'X', desc: 'Grava X no armazenamento local do navegador (localStorage)' },
+        { name: 'carregue local X', params: 'X', desc: 'Restaura X do armazenamento local do navegador (localStorage)' },
       ],
       jsCode: '',
-      example: `importe interface\n\nexecute cor de fundo 15 20 40\n\ndefina n como 0\ncarregue local n\n\ndefina btn como funcao botao("+1") execute n + 1\napresente btn em botao ajuste centro m\n\naltere n para btn.valor\nsalve local n\n\napresente "Contagem: " + n em destaque ajuste centro g`,
+      example: `importe interface\n\nexecute cor de fundo 15 23 42\nexecute cor de texto 241 245 249\n\ndefina n como 0\ncarregue local n\n\ndefina btn como funcao botao("Somar +1") altere n para n + 1\ndefina zerar como funcao botao("Zerar") altere n para 0\n\napresente "Contador com Persistência Local" em destaque ajuste centro g\napresente "Contagem: " + n em apresentacao ajuste centro g\napresente btn em botao ajuste centro m\napresente zerar em botao ajuste centro p\nsalve local n`,
     },
 
     // ── formulas_fisica (META) ───────────────────────────────
@@ -3689,7 +4027,7 @@ const CrabLibRegistry = {
       exports: [],
       functions: [],
       jsCode: '',
-      example: `importe formulas_fisica\n\nexecute velocidade(100, 5)\nexecute pressao_fluido(1000, 9.81, 10)\nexecute energia_foton(6e14)\nexecute forca_lorentz(1.6e-19, 1e6, 0.5)`,
+      example: `importe formulas_fisica\n\nexecute velocidade(100, 5)\nexecute pressao_fluido(1000, 10)\nexecute energia_foton(6e14)\nexecute forca_lorentz(1.6e-19, 1e6, 0.5)`,
       dependencies: ['fisica_mecanica', 'fisica_termodinamica', 'fisica_optica', 'fisica_fluidos', 'fisica_gravitacao', 'fisica_eletromagnetismo', 'fisica_moderna', 'fisica_ondas'],
     },
 
@@ -4958,7 +5296,7 @@ function probabilidade_uniao(pa, pb, pab) { return pa + pb - pab; }
 function poisson(k, lambda) { var ek = Math.pow(lambda, k) * Math.exp(-lambda); var kf = 1; for (var i = 2; i <= k; i++) kf *= i; return ek / kf; }
 function normal_pdf(x, media, dp) { return (1 / (dp * Math.sqrt(2 * Math.PI))) * Math.exp(-0.5 * Math.pow((x - media) / dp, 2)); }
 function entropia(probs) { var p = Array.isArray(probs) ? probs : Object.values(probs); var s = 0; for (var i = 0; i < p.length; i++) { var pi = Number(p[i]); if (pi > 0) s -= pi * Math.log2(pi); } return s; }`,
-      example: `importe probabilidade\n\nexecute bayes(0.01, 0.95, 0.05)\nexecute distribuicao_binomial(10, 3, 0.5)\nexecute poisson(2, 3)\nexecute normal_pdf(0, 0, 1)\napresente entropia(0.5, 0.5) em destaque`,
+      example: `importe probabilidade\n\nexecute bayes(0.01, 0.95, 0.05)\nexecute distribuicao_binomial(10, 3, 0.5)\nexecute poisson(2, 3)\nexecute normal_pdf(0, 0, 1)\napresente entropia([0.5, 0.5]) em destaque`,
     },
 
     // ── algebra_linear ───────────────────────────────────────
@@ -5303,7 +5641,7 @@ function area_poligono_vertices(xs,ys) { var x=Array.isArray(xs)?xs:Object.value
 function equacao_circulo(cx,cy,r,x,y) { var d=Math.sqrt((x-cx)*(x-cx)+(y-cy)*(y-cy)); if(Math.abs(d-r)<0.01) return 'Na circunferência'; return d<r?'Dentro':'Fora'; }
 function ponto_na_reta(x,m,b) { return m*x+b; }
 function baricentro(x1,y1,x2,y2,x3,y3) { return [(x1+x2+x3)/3,(y1+y2+y3)/3]; }`,
-      example: `importe geometria_analitica\n\nexecute equacao_reta(0, 1, 2, 5)\nexecute coeficiente_angular(0, 0, 3, 6)\nexecute distancia_ponto_reta(1, 1, 1, -1, 0)\nexecute baricentro(0,0, 4,0, 2,3)\napresente area_poligono_vertices(0,4,4,0, 0,0,3,3) em destaque`,
+      example: `importe geometria_analitica\n\nexecute equacao_reta(0, 1, 2, 5)\nexecute coeficiente_angular(0, 0, 3, 6)\nexecute distancia_ponto_reta(1, 1, 1, -1, 0)\nexecute baricentro(0,0, 4,0, 2,3)\napresente area_poligono_vertices([0,4,4,0], [0,0,3,3]) em destaque`,
     },
 
     // ── unidades_dados ───────────────────────────────────────
@@ -5428,7 +5766,7 @@ function conjunto_potencia(a) { var arr = _toArr(a); var r = [[]]; arr.forEach(f
 function cardinalidade(a) { var u = []; _toArr(a).forEach(function(v){if(u.indexOf(v)===-1)u.push(v);}); return u.length; }
 function pertence(elem, a) { return _toArr(a).indexOf(elem)!==-1?1:0; }
 function conjuntos_disjuntos(a, b) { return intersecao(a,b).length===0?1:0; }`,
-      example: `importe conjuntos\n\ndefina A como 1, 2, 3, 4, 5\ndefina B como 3, 4, 5, 6, 7\nexecute uniao(A, B)\nexecute intersecao(A, B)\nexecute diferenca(A, B)\nexecute eh_subconjunto(1,2,3, A)\napresente conjunto_potencia(1, 2, 3) em dados`,
+      example: `importe conjuntos\n\ndefina A como 1, 2, 3, 4, 5\ndefina B como 3, 4, 5, 6, 7\nexecute uniao(A, B)\nexecute intersecao(A, B)\nexecute diferenca(A, B)\nexecute eh_subconjunto([1,2,3], A)\napresente conjunto_potencia([1, 2, 3]) em dados`,
     },
 
     // ── trigonometria ────────────────────────────────────────
@@ -5974,7 +6312,7 @@ function conectividade(v,a){return a>=v-1?1:0;}
 function indice_wiener(distancias){var arr=Array.isArray(distancias)?distancias:Object.values(distancias);return arr.reduce(function(s,v){return s+v;},0)/2;}
 function grau_medio(v,a){return 2*a/v;}
 function esparsidade(v,a){return 1-densidade_grafo(v,a);}`,
-      example: `importe teoria_grafos\n\nexecute densidade_grafo(6, 7)\nexecute eh_euleriano(2, 4, 2, 4, 2, 4)\nexecute num_arestas_arvore(8)\nexecute grau_medio(6, 7)\napresente coloracao_minima(4) em destaque`,
+      example: `importe teoria_grafos\n\nexecute densidade_grafo(6, 7)\nexecute eh_euleriano([2, 4, 2, 4, 2, 4])\nexecute num_arestas_arvore(8)\nexecute grau_medio(6, 7)\napresente coloracao_minima(4) em destaque`,
     },
 
     // ── engenharia_mecanica ───────────────────────────────────
@@ -6155,7 +6493,7 @@ function drawdown_maximo(pico,vale){return(pico-vale)/pico;}`,
       exports: [],
       functions: [],
       jsCode: '',
-      example: `importe biblioteca_ciencias\n\nexecute velocidade(100, 10)\nexecute ph(0.001)\nexecute imc_bio(78, 1.75)\nexecute velocidade_luz()\nexecute lei_ohm(220, 100)\nexecute norma_vetor(3, 4)`,
+      example: `importe biblioteca_ciencias\n\nexecute velocidade(100, 10)\nexecute ph(0.001)\nexecute imc_bio(78, 1.75)\nexecute velocidade_luz()\nexecute lei_ohm(220, 100)\nexecute norma_vetor([3, 4])`,
       dependencies: ['formulas_fisica', 'formulas_quimica', 'formulas_biologia', 'astronomia', 'formulas_eletrica', 'algebra_linear', 'eletroquimica', 'bioquimica'],
     },
 
@@ -6181,7 +6519,7 @@ function drawdown_maximo(pico,vale){return(pico-vale)/pico;}`,
       exports: [],
       functions: [],
       jsCode: '',
-      example: `importe biblioteca_matematica_completa\n\nexecute fatorial(10)\nexecute area_circulo(5)\nexecute pa_soma(1, 2, 100)\nexecute eh_primo(97)\nexecute norma_vetor(3, 4)`,
+      example: `importe biblioteca_matematica_completa\n\nexecute fatorial(10)\nexecute area_circulo(5)\nexecute pa_soma(1, 2, 100)\nexecute eh_primo(97)\nexecute norma_vetor([3, 4])`,
       dependencies: ['matematica', 'geometria', 'progressoes', 'numeros', 'algebra_linear', 'probabilidade', 'estatistica_avancada', 'trigonometria', 'combinatoria', 'numeros_complexos', 'sequencias', 'conjuntos', 'matematica_discreta', 'teoria_grafos'],
     },
 

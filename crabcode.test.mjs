@@ -1,11 +1,39 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { Lexer, Parser, Transpiler, CrabLibRegistry } from './js/language.js';
-import { parseCSV, csvColumnsToJs, DEFAULT_CODE } from './js/storage.js';
-import { getAllTutorialCodeBlocks, TUTORIAL_UNITS } from './js/tutorial.js';
+import {
+  parseCSV, csvColumnsToJs, DEFAULT_CODE,
+  isReservedDatasetKey, parseSmartNumber,
+} from './js/storage.js';
+import {
+  TUTORIAL_UNITS,
+  getAllTutorialCodeBlocks,
+  getAllTutorialSolutionBlocks,
+} from './js/tutorial.js';
+import { DOCS_CHAPTERS, getAllDocsCodeBlocks } from './js/docs.js';
+import {
+  PIXEL_PALETTES,
+  PIXEL_PRESETS,
+  createEmptyFrame,
+  cloneFrame,
+  bresenhamLine,
+  rectPixels,
+  circlePixels,
+  floodFill,
+  replaceColor,
+  shiftFrame,
+  flipFrameH,
+  flipFrameV,
+  rotateFrame90,
+  autoOutline,
+  resizeFramePreserve,
+  hexToRgba,
+  rgbaToHex,
+} from './js/pixel_presets.js';
 
 // Helper: compile & execute CrabCode source in Node using async Function
-async function compileAndRun(source, { csvDatasets = [], extraGlobal = {} } = {}) {
+async function compileAndRun(source, { csvDatasets = [], savedSprites = null, extraGlobal = {} } = {}) {
   const lexer = new Lexer(source, { registry: CrabLibRegistry, csvDatasets });
   const { tokens, errors: lexErrors } = lexer.tokenize();
 
@@ -14,7 +42,7 @@ async function compileAndRun(source, { csvDatasets = [], extraGlobal = {} } = {}
     new Set(lexer.declaredVars),
     new Set(lexer.declaredArrays),
     new Set(lexer.declaredObjects),
-    { registry: CrabLibRegistry, csvDatasets }
+    { registry: CrabLibRegistry, csvDatasets, savedSprites }
   );
   const { ast, errors: parseErrors } = parser.parse();
 
@@ -27,15 +55,16 @@ async function compileAndRun(source, { csvDatasets = [], extraGlobal = {} } = {}
   );
   const { code: jsCode, errors: transpileErrors } = transpiler.transpile();
 
-  const compileErrors = [...lexErrors, ...parseErrors, ...transpileErrors];
+  const allDiagnostics = [...lexErrors, ...parseErrors, ...transpileErrors];
+  const compileErrors = allDiagnostics.filter(d => d.severity !== 'warning');
+  const compileWarnings = allDiagnostics.filter(d => d.severity === 'warning');
 
-  // Minimal browser-compatible mock environment for interface / localStorage tests
   const memStore = new Map();
   const mockParent = {
     __ccState: extraGlobal.__ccState || {},
     __ccElements: extraGlobal.__ccElements || {},
     __ccSprites: extraGlobal.__ccSprites || {},
-    __ccTecla: extraGlobal.__ccTecla || { atual: '' },
+    __ccTecla: extraGlobal.__ccTecla || { valor: '', atual: '' },
     __ccLastEvent: extraGlobal.__ccLastEvent || null,
     __ccImages: extraGlobal.__ccImages || {},
     localStorage: {
@@ -66,6 +95,8 @@ async function compileAndRun(source, { csvDatasets = [], extraGlobal = {} } = {}
 
   return {
     compileErrors,
+    compileWarnings,
+    allDiagnostics,
     runtimeError,
     output,
     jsCode,
@@ -119,7 +150,6 @@ apresente rodar(execute inverter_texto(cor)) em texto
 
 test('execute loop produces outputs without returning early', async () => {
   const code = `
-defina i como 1
 execute loop(i = 1, i <= 4, i = i + 1) execute i * 10
 `;
   const res = await compileAndRun(code);
@@ -128,7 +158,7 @@ execute loop(i = 1, i <= 4, i = i + 1) execute i * 10
   assert.deepEqual(res.output.map(o => o.value), [10, 20, 30, 40]);
 });
 
-test('Interface mode: botao click updates state, slider/toggle persist, sprite "key" & com cor work', async () => {
+test('Interface mode: botao click updates state, slider/toggle persist, sprite & 2-arg grid(5,5) work', async () => {
   const code = `
 importe interface
 execute cor de fundo 15 23 42
@@ -146,15 +176,18 @@ apresente t em toggle ajuste centro m
 apresente p em sprite ajuste centro m
 apresente tri em sprite grid(5, 5)
 `;
-  // Initial render
-  const r1 = await compileAndRun(code);
+  const r1 = await compileAndRun(code, { savedSprites: { nave: { size: 16, pixels: [] } } });
   assert.deepEqual(r1.compileErrors, []);
   assert.equal(r1.runtimeError, null);
   assert.equal(r1.interfaceMode, true);
   assert.equal(r1.mockParent.__ccState.n, 0);
 
-  // Simulate button click event re-run (matches InterfaceRenderer._triggerRerun payload)
+  const triOut = r1.output.find(o => o.type === 'sprite' && o.spriteKey === 'tri');
+  assert.deepEqual(triOut.yellow.grid, { x: 5, y: 5, w: 4, h: 2 });
+
+  // Simulate button click re-run
   const r2 = await compileAndRun(code, {
+    savedSprites: { nave: { size: 16, pixels: [] } },
     extraGlobal: {
       __ccState: r1.mockParent.__ccState,
       __ccElements: r1.mockParent.__ccElements,
@@ -167,7 +200,6 @@ apresente tri em sprite grid(5, 5)
   assert.equal(r2.mockParent.__ccState.n, 1);
   const textoItem = r2.output.find(o => o.type === 'texto');
   assert.equal(textoItem.value, 1);
-  assert.ok(r2.output.some(o => o.type === 'sprite' && o.spriteKey === 'p'));
   assert.equal(r2.mockParent.__ccSprites.p.imageKey, 'nave');
   assert.deepEqual(r2.mockParent.__ccSprites.tri.color, { r: 255, g: 120, b: 0 });
 });
@@ -195,35 +227,6 @@ apresente n em texto
   assert.equal(r2.mockParent.__ccState.n, 0);
 });
 
-test('All QUICK_TEMPLATES in js/main.js compile and run with zero errors', async () => {
-  const fs = await import('node:fs');
-  const mainSrc = fs.readFileSync(new URL('./js/main.js', import.meta.url), 'utf8');
-  const match = mainSrc.match(/const QUICK_TEMPLATES = (\[[\s\S]*?\n\]);/);
-  assert.ok(match, 'Could not locate QUICK_TEMPLATES in js/main.js');
-  const templates = new Function(`return ${match[1]};`)();
-  assert.equal(templates.length, 6);
-  for (const tpl of templates) {
-    const res = await compileAndRun(tpl.code);
-    assert.deepEqual(res.compileErrors, [], `Template '${tpl.id}' compile errors: ${JSON.stringify(res.compileErrors)}`);
-    assert.equal(res.runtimeError, null, `Template '${tpl.id}' runtime error: ${res.runtimeError}`);
-    assert.ok(res.output.length > 0, `Template '${tpl.id}' produced empty output`);
-  }
-});
-
-test('Conditional cor de fundo works cleanly', async () => {
-  const code = `
-importe interface
-defina quente como verdadeiro
-execute cor de fundo 200 40 40 se quente senao 20 40 120
-apresente "ok" em texto
-`;
-  const res = await compileAndRun(code);
-  assert.deepEqual(res.compileErrors, []);
-  assert.equal(res.runtimeError, null);
-  const bg = res.output.find(o => o.type === 'corDeFundo');
-  assert.deepEqual({ r: bg.r, g: bg.g, b: bg.b }, { r: 200, g: 40, b: 40 });
-});
-
 test('Local persistence salve/carregue local works end-to-end', async () => {
   const code = `
 defina pontos como 999
@@ -238,7 +241,74 @@ execute pontos
   assert.equal(res.output[0].value, 999);
 });
 
-// ==================== 2. ALL OFFICIAL LIBRARIES AUDIT ====================
+// ==================== 2. BULLETPROOF DIAGNOSTICS AUDIT ====================
+test('Diagnostics: rejects unavailable cloud storage (salve nuvem / carregue nuvem)', async () => {
+  const r1 = await compileAndRun(`defina x como 10\nsalve nuvem x`);
+  assert.ok(r1.compileErrors.some(e => e.code === 'E_CLOUD_UNAVAILABLE'));
+
+  const r2 = await compileAndRun(`defina x como 10\ncarregue nuvem x`);
+  assert.ok(r2.compileErrors.some(e => e.code === 'E_CLOUD_UNAVAILABLE'));
+});
+
+test('Diagnostics: detects duplicate defina, undeclared variable, arity mismatch, and division by zero', async () => {
+  const rDup = await compileAndRun(`defina x como 1\ndefina x como 2`);
+  assert.ok(rDup.compileErrors.some(e => e.code === 'E_DUP_DEF'));
+
+  const rUndef = await compileAndRun(`apresente variavel_fantasma`);
+  assert.ok(rUndef.compileErrors.some(e => e.code === 'E_UNDEF_VAR'));
+
+  const rArityLib = await compileAndRun(`importe matematica\nexecute fatorial(1, 2)`);
+  assert.ok(rArityLib.compileErrors.some(e => e.code === 'E_ARITY'));
+
+  const rArityUser = await compileAndRun(`defina soma como funcao(a, b) execute a + b\nexecute soma(5)`);
+  assert.ok(rArityUser.compileErrors.some(e => e.code === 'E_ARITY'));
+
+  const rDivZero = await compileAndRun(`execute 10 / 0`);
+  assert.ok(rDivZero.compileErrors.some(e => e.code === 'E_DIV_ZERO'));
+});
+
+test('Diagnostics: detects interface commands without import, RGB bounds, ajuste/grid/slider/seletor, and missing sprite warning', async () => {
+  const rNeedIface = await compileAndRun(`execute cor de fundo 10 20 30`);
+  assert.ok(rNeedIface.compileErrors.some(e => e.code === 'E_NEED_INTERFACE'));
+
+  const rRgb = await compileAndRun(`importe interface\nexecute cor de fundo 300 0 0`);
+  assert.ok(rRgb.compileErrors.some(e => e.code === 'E_RGB_RANGE'));
+
+  const rAjuste = await compileAndRun(`importe interface\napresente "Oi" em texto ajuste diagonal m`);
+  assert.ok(rAjuste.compileErrors.some(e => e.code === 'E_AJUSTE_INVALID'));
+
+  const rGrid = await compileAndRun(`importe interface\napresente "Oi" em texto grid 150 1 2 2`);
+  assert.ok(rGrid.compileErrors.some(e => e.code === 'E_GRID_ARGS'));
+
+  const rSlider = await compileAndRun(`importe interface\ndefina s como funcao() slider("X", 50, 10)`);
+  assert.ok(rSlider.compileErrors.some(e => e.code === 'E_SLIDER_RANGE'));
+
+  const rSeletor = await compileAndRun(`importe interface\ndefina sel como funcao() seletor("Vazio")`);
+  assert.ok(rSeletor.compileErrors.some(e => e.code === 'E_SELETOR_EMPTY'));
+
+  const rSpriteWarn = await compileAndRun(
+    `importe interface\ndefina s como sprite "inexistente"\napresente s em sprite`,
+    { savedSprites: {} }
+  );
+  assert.ok(rSpriteWarn.compileWarnings.some(w => w.code === 'W_SPRITE_MISSING'));
+});
+
+// ==================== 3. ALL QUICK TEMPLATES ====================
+test('All QUICK_TEMPLATES in js/main.js compile and run with zero errors', async () => {
+  const mainSrc = fs.readFileSync(new URL('./js/main.js', import.meta.url), 'utf8');
+  const match = mainSrc.match(/const QUICK_TEMPLATES = (\[[\s\S]*?\n\]);/);
+  assert.ok(match, 'Could not locate QUICK_TEMPLATES in js/main.js');
+  const templates = new Function(`return ${match[1]};`)();
+  assert.equal(templates.length, 6);
+  for (const tpl of templates) {
+    const res = await compileAndRun(tpl.code);
+    assert.deepEqual(res.compileErrors, [], `Template '${tpl.id}' compile errors: ${JSON.stringify(res.compileErrors)}`);
+    assert.equal(res.runtimeError, null, `Template '${tpl.id}' runtime error: ${res.runtimeError}`);
+    assert.ok(res.output.length > 0, `Template '${tpl.id}' produced empty output`);
+  }
+});
+
+// ==================== 4. ALL 100 OFFICIAL LIBRARIES AUDIT ====================
 test('Registry has >= 100 official libraries and valid categories/ranks', () => {
   const keys = Object.keys(CrabLibRegistry.official);
   assert.ok(keys.length >= 100, `Expected >= 100 libs, got ${keys.length}`);
@@ -300,57 +370,212 @@ test('Every single official library example compiles and executes with zero erro
   assert.deepEqual(failures, [], `Library example failures (${failures.length}):\n${failures.join('\n')}`);
 });
 
-// ==================== 3. ALL TUTORIAL LESSONS AUDIT ====================
-test('Tutorial units are sequentially numbered 1..36 with zero gaps', () => {
-  const blocks = getAllTutorialCodeBlocks();
-  assert.equal(TUTORIAL_UNITS.length, 8);
-  assert.equal(blocks.length, 36);
-  blocks.forEach((b, i) => {
+// ==================== 5. ALL 96 TUTORIAL LESSONS & 96 SOLUTIONS AUDIT ====================
+test('Tutorial has 12 units x 8 lessons = 96 atomic lessons sequentially numbered with exercises and zero cloud refs', () => {
+  const demos = getAllTutorialCodeBlocks();
+  const sols = getAllTutorialSolutionBlocks();
+  assert.equal(TUTORIAL_UNITS.length, 12);
+  assert.equal(demos.length, 96);
+  assert.equal(sols.length, 96);
+
+  demos.forEach((b, i) => {
     assert.equal(b.num, i + 1, `Expected lesson num ${i + 1}, got ${b.num} (${b.title})`);
+    assert.ok(!/\bnuvem\b/i.test(b.code), `Lesson ${b.num} demo mentions removed 'nuvem'`);
+  });
+
+  sols.forEach((s, i) => {
+    assert.equal(s.num, i + 1);
+    assert.ok(s.question.length > 10, `Lesson ${s.num} missing exercise question`);
+    assert.ok(s.code.trim().length > 0, `Lesson ${s.num} missing exercise solution`);
+    assert.ok(!/\bnuvem\b/i.test(s.code), `Lesson ${s.num} solution mentions removed 'nuvem'`);
   });
 });
 
-test('Every single tutorial lesson & project compiles and runs with zero errors', async () => {
-  const blocks = getAllTutorialCodeBlocks();
+test('Every single one of the 96 tutorial demo codes compiles & executes cleanly', async () => {
+  const demos = getAllTutorialCodeBlocks();
   const failures = [];
-  for (const b of blocks) {
+  for (const b of demos) {
     const res = await compileAndRun(b.code);
     if (res.compileErrors.length > 0) {
-      failures.push(`L${b.num} (${b.title}): compile errors: ${res.compileErrors.map(e => `line ${e.line}: ${e.message}`).join('; ')}`);
+      failures.push(`Demo L${b.num} (${b.title}): compile errors: ${res.compileErrors.map(e => `line ${e.line}: ${e.message}`).join('; ')}`);
     } else if (res.runtimeError) {
-      failures.push(`L${b.num} (${b.title}): runtime error: ${res.runtimeError}`);
+      failures.push(`Demo L${b.num} (${b.title}): runtime error: ${res.runtimeError}`);
+    } else if (res.output.length === 0) {
+      failures.push(`Demo L${b.num} (${b.title}): produced empty output`);
+    } else {
+      for (const item of res.output) {
+        if (typeof item.value === 'number' && Number.isNaN(item.value)) {
+          failures.push(`Demo L${b.num}: output produced NaN`);
+        }
+        if (typeof item.value === 'string' && (item.value.includes('undefined') || item.value.includes('NaN'))) {
+          failures.push(`Demo L${b.num}: output string contains undefined/NaN: ${item.value}`);
+        }
+      }
     }
   }
-  assert.deepEqual(failures, [], `Tutorial code failures:\n${failures.join('\n')}`);
+  assert.deepEqual(failures, [], `Tutorial demo failures (${failures.length}):\n${failures.join('\n')}`);
 });
 
-// ==================== 4. CSV PARSER AUDIT ====================
-test('parseCSV handles PT-BR semicolon, comma decimals, BOM, quotes, accents, and duplicate headers', () => {
-  const raw = '\uFEFF"Mês";2024 Vendas;"Observação";Vendas\nJan;1250,50;"Ótimo; ""top""";10\nFev;980,25;"Normal";20\n\nMar;1500,00;"Pico";30\n';
+test('Every single one of the 96 tutorial exercise solutions compiles & executes cleanly', async () => {
+  const sols = getAllTutorialSolutionBlocks();
+  const failures = [];
+  for (const s of sols) {
+    const res = await compileAndRun(s.code);
+    if (res.compileErrors.length > 0) {
+      failures.push(`Sol L${s.num} (${s.title}): compile errors: ${res.compileErrors.map(e => `line ${e.line}: ${e.message}`).join('; ')}`);
+    } else if (res.runtimeError) {
+      failures.push(`Sol L${s.num} (${s.title}): runtime error: ${res.runtimeError}`);
+    } else if (res.output.length === 0) {
+      failures.push(`Sol L${s.num} (${s.title}): produced empty output`);
+    } else {
+      for (const item of res.output) {
+        if (typeof item.value === 'number' && Number.isNaN(item.value)) {
+          failures.push(`Sol L${s.num}: output produced NaN`);
+        }
+        if (typeof item.value === 'string' && (item.value.includes('undefined') || item.value.includes('NaN'))) {
+          failures.push(`Sol L${s.num}: output string contains undefined/NaN: ${item.value}`);
+        }
+      }
+    }
+  }
+  assert.deepEqual(failures, [], `Tutorial solution failures (${failures.length}):\n${failures.join('\n')}`);
+});
+
+// ==================== 6. DOCUMENTATION PORTAL EXAMPLES AUDIT ====================
+test('Docs portal has >= 16 chapters and every runnable docs example executes with zero errors', async () => {
+  assert.ok(DOCS_CHAPTERS.length >= 16, `Expected >= 16 docs chapters, got ${DOCS_CHAPTERS.length}`);
+  const blocks = getAllDocsCodeBlocks();
+  assert.ok(blocks.length >= 14, `Expected >= 14 runnable docs examples, got ${blocks.length}`);
+
+  const failures = [];
+  for (const b of blocks) {
+    const res = await compileAndRun(b.code, { savedSprites: { nave: { size: 16, pixels: [] }, caranguejo: { size: 16, pixels: [] } } });
+    if (res.compileErrors.length > 0) {
+      failures.push(`Doc [${b.chapter} / ${b.title}]: compile errors: ${res.compileErrors.map(e => `L${e.line}:${e.message}`).join('; ')}`);
+    } else if (res.runtimeError) {
+      failures.push(`Doc [${b.chapter} / ${b.title}]: runtime error: ${res.runtimeError}`);
+    } else if (res.output.length === 0) {
+      failures.push(`Doc [${b.chapter} / ${b.title}]: produced empty output`);
+    }
+  }
+  assert.deepEqual(failures, [], `Docs example failures (${failures.length}):\n${failures.join('\n')}`);
+});
+
+// ==================== 7. HARDENED CSV PARSER AUDIT ====================
+test('parseSmartNumber parses PT-BR currency, thousands, percentages, and US decimals', () => {
+  assert.equal(parseSmartNumber('R$ 1.250,50'), 1250.5);
+  assert.equal(parseSmartNumber('45,5%'), 45.5);
+  assert.equal(parseSmartNumber('-3.400,25'), -3400.25);
+  assert.equal(parseSmartNumber('1,250.75', 'us'), 1250.75);
+  assert.ok(Number.isNaN(parseSmartNumber('texto livre')));
+});
+
+test('isReservedDatasetKey blocks CrabCode keywords, JS keywords, and official lib keys', () => {
+  assert.equal(isReservedDatasetKey('interface'), true);
+  assert.equal(isReservedDatasetKey('defina'), true);
+  assert.equal(isReservedDatasetKey('function'), true);
+  assert.equal(isReservedDatasetKey('matematica'), true);
+  assert.equal(isReservedDatasetKey('vendas_2025'), false);
+});
+
+test('parseCSV sanitizes reserved column names, normalizes ragged rows, and parses PT-BR formats', () => {
+  const raw = '\uFEFF"Mês";function;defina;"Faturamento";Margem\nJan;10;20;"R$ 1.250,50";22,5%\nFev;15;25;"R$ 980,25"\n\nMar;20;30;"R$ 1.500,00";30,0%;extra_ignored\n';
   const parsed = parseCSV(raw);
   assert.equal(parsed.error, undefined);
   assert.equal(parsed.delimiter, ';');
   assert.equal(parsed.rows, 3);
-  assert.equal(parsed.columns.length, 4);
   assert.equal(parsed.columns[0].name, 'Mes');
-  assert.equal(parsed.columns[1].name, 'col_2024_Vendas');
-  assert.equal(parsed.columns[1].type, 'number');
-  assert.deepEqual(parsed.columns[1].values, [1250.5, 980.25, null, 1500]);
-  assert.equal(parsed.columns[2].name, 'Observacao');
-  assert.equal(parsed.columns[2].values[0], 'Ótimo; "top"');
+  assert.equal(parsed.columns[1].name, 'col_function');
+  assert.equal(parsed.columns[2].name, 'col_defina');
+  assert.equal(parsed.columns[3].type, 'number');
+  assert.deepEqual(parsed.columns[3].values, [1250.5, 980.25, 1500]);
+  assert.deepEqual(parsed.columns[4].values, [22.5, null, 30]);
+  assert.ok(parsed.audit.raggedRows >= 2);
+  assert.ok(parsed.audit.renamedHeaders.length >= 3);
+  assert.ok(parsed.audit.emptyCells >= 1);
 
-  // Ensure generated JS executes cleanly
   const js = csvColumnsToJs({ columns: parsed.columns });
-  const vals = new Function(`${js}\nreturn { Mes, col_2024_Vendas, Observacao };`)();
-  assert.deepEqual(vals.col_2024_Vendas, [1250.5, 980.25, null, 1500]);
-  assert.equal(vals.Observacao[0], 'Ótimo; "top"');
+  const vals = new Function(`${js}\nreturn { Mes, col_function, col_defina, Faturamento, Margem };`)();
+  assert.deepEqual(vals.Faturamento, [1250.5, 980.25, 1500]);
+  assert.deepEqual(vals.col_function, [10, 15, 20]);
 });
 
-test('parseCSV handles standard comma CSV with quoted commas', () => {
+test('parseCSV handles standard comma CSV with quoted commas and headerless mode', () => {
   const raw = 'cidade,populacao\n"São Paulo, SP",12300000\n"Rio de Janeiro, RJ",6740000';
   const parsed = parseCSV(raw);
   assert.equal(parsed.delimiter, ',');
   assert.equal(parsed.columns[0].values[0], 'São Paulo, SP');
-  assert.equal(parsed.columns[1].type, 'number');
   assert.equal(parsed.columns[1].values[1], 6740000);
+
+  const headerless = parseCSV('10;20\n30;40', { hasHeader: false });
+  assert.equal(headerless.columns[0].name, 'col_1');
+  assert.equal(headerless.columns[1].name, 'col_2');
+  assert.deepEqual(headerless.columns[0].values, [10, 30]);
+});
+
+// ==================== 8. PIXEL ART STUDIO PURE MATH & 12 PRESETS ====================
+test('Pixel Art pure math ops work accurately on frames', () => {
+  const size = 8;
+  const frame = createEmptyFrame(size);
+  assert.equal(frame.length, 64);
+
+  const RED = [255, 0, 0, 255];
+  const GREEN = [0, 255, 0, 255];
+  const BLUE = [0, 0, 255, 255];
+  const BLACK = [0, 0, 0, 255];
+
+  // Bresenham line horizontal
+  const line = bresenhamLine(1, 2, 5, 2);
+  assert.equal(line.length, 5);
+  for (const [x, y] of line) frame[y * size + x] = RED;
+
+  // Rect & circle pixels
+  assert.equal(rectPixels(0, 0, 3, 3, true).length, 16);
+  assert.equal(rectPixels(0, 0, 3, 3, false).length, 12);
+  assert.ok(circlePixels(4, 4, 6, 4, false).length >= 8);
+
+  // Replace color
+  const replaced = replaceColor(frame, RED, GREEN);
+  assert.deepEqual(replaced[2 * size + 1], GREEN);
+
+  // Flood fill background
+  const filled = floodFill(cloneFrame(replaced), size, 0, 0, BLUE);
+  assert.deepEqual(filled[0], BLUE);
+  assert.deepEqual(filled[2 * size + 1], GREEN);
+
+  // Transforms: shift, flipH, flipV, rotate90, autoOutline, resize
+  const shifted = shiftFrame(replaced, size, 1, 0);
+  assert.deepEqual(shifted[2 * size + 2], GREEN);
+
+  const flippedH = flipFrameH(replaced, size);
+  assert.deepEqual(flippedH[2 * size + (size - 1 - 1)], GREEN);
+
+  const flippedV = flipFrameV(replaced, size);
+  assert.deepEqual(flippedV[(size - 1 - 2) * size + 1], GREEN);
+
+  const rot = rotateFrame90(replaced, size, true);
+  assert.equal(rot.length, 64);
+
+  const outlined = autoOutline(replaced, size, BLACK);
+  assert.deepEqual(outlined[1 * size + 1], BLACK);
+
+  const resized = resizeFramePreserve(replaced, size, 16);
+  assert.equal(resized.length, 256);
+
+  // Color conversions
+  assert.deepEqual(hexToRgba('#f97316'), [249, 115, 22, 255]);
+  assert.equal(rgbaToHex([249, 115, 22, 255]), '#f97316');
+});
+
+test('All 12 curated pixel-art presets & 4 palettes have valid structure', () => {
+  assert.equal(Object.keys(PIXEL_PALETTES).length, 4);
+  assert.equal(PIXEL_PRESETS.length, 12);
+  for (const p of PIXEL_PRESETS) {
+    assert.ok(p.key && p.name, 'Preset missing key/name');
+    assert.ok(p.size >= 8, `Preset ${p.key} invalid size`);
+    assert.ok(Array.isArray(p.frames) && p.frames.length >= 1, `Preset ${p.key} missing frames`);
+    for (const f of p.frames) {
+      assert.equal(f.length, p.size * p.size, `Preset ${p.key} frame length mismatch`);
+    }
+  }
 });

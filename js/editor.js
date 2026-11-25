@@ -5,39 +5,101 @@ import { escapeHtml } from './utils.js';
 
 // ==================== ERROR MANAGER ====================
 class ErrorManager {
-  constructor(listEl, countEl) {
+  constructor(listEl, countEl, panelEl) {
     this.listEl = listEl;
     this.countEl = countEl;
+    this.panelEl = panelEl;
     this.errors = [];
+    this.runtimeErrors = [];
   }
 
-  setErrors(errors) {
-    this.errors = errors || [];
-    this.render();
+  setErrors(errors, { autoExpand = false } = {}) {
+    this.errors = (errors || []).map(e => ({
+      line: e.line || 1,
+      col: e.col || 1,
+      message: e.message || String(e),
+      severity: e.severity || 'error',
+      code: e.code || ''
+    }));
+    this.render(autoExpand);
   }
 
-  render() {
-    this.listEl.innerHTML = '';
-    this.countEl.textContent = String(this.errors.length);
-
-    if (this.errors.length === 0) {
-      this.countEl.classList.add('zero');
-      this.countEl.classList.remove('nonzero');
+  setRuntimeError(message, line = null) {
+    if (!message) {
+      this.runtimeErrors = [];
     } else {
-      this.countEl.classList.remove('zero');
+      this.runtimeErrors = [{
+        line: line || 1,
+        col: 1,
+        message: String(message),
+        severity: 'error',
+        code: 'E_RUNTIME'
+      }];
+    }
+    this.render(this.runtimeErrors.length > 0);
+  }
+
+  clearRuntimeErrors() {
+    if (this.runtimeErrors.length > 0) {
+      this.runtimeErrors = [];
+      this.render(false);
+    }
+  }
+
+  getAll() {
+    return [...this.errors, ...this.runtimeErrors];
+  }
+
+  render(autoExpand = false) {
+    if (!this.listEl || !this.countEl) return;
+    const all = this.getAll();
+    const errCount = all.filter(d => d.severity !== 'warning').length;
+    const warnCount = all.filter(d => d.severity === 'warning').length;
+
+    this.listEl.innerHTML = '';
+
+    if (all.length === 0) {
+      this.countEl.textContent = '0';
+      this.countEl.classList.add('zero');
+      this.countEl.classList.remove('nonzero', 'warnonly');
+    } else if (errCount === 0 && warnCount > 0) {
+      this.countEl.textContent = `${warnCount} aviso${warnCount > 1 ? 's' : ''}`;
+      this.countEl.classList.remove('zero', 'nonzero');
+      this.countEl.classList.add('warnonly');
+    } else {
+      this.countEl.textContent = warnCount > 0 ? `${errCount} erro${errCount > 1 ? 's' : ''} · ${warnCount} aviso${warnCount > 1 ? 's' : ''}` : String(errCount);
+      this.countEl.classList.remove('zero', 'warnonly');
       this.countEl.classList.add('nonzero');
     }
 
-    for (const err of this.errors) {
+    if (all.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'error-empty';
+      empty.textContent = 'Nenhum problema detectado no código atual.';
+      this.listEl.appendChild(empty);
+      return;
+    }
+
+    for (const diag of all) {
+      const isWarn = diag.severity === 'warning';
       const item = document.createElement('div');
-      item.className = 'error-item';
+      item.className = `error-item ${isWarn ? 'is-warning' : 'is-error'}`;
+      const badgeLabel = isWarn ? 'Aviso' : (diag.code === 'E_RUNTIME' ? 'Execução' : 'Erro');
+      const codeTag = diag.code ? `<span class="error-code">${escapeHtml(diag.code)}</span>` : '';
       item.innerHTML = `
-        <span class="error-icon">!</span>
-        <span class="error-line-num">Linha ${err.line}</span>
-        <span class="error-msg">${escapeHtml(err.message)}</span>
+        <span class="error-sev-badge ${isWarn ? 'sev-warn' : 'sev-err'}">${badgeLabel}</span>
+        <span class="error-line-num">Ln ${diag.line}</span>
+        ${codeTag}
+        <span class="error-msg">${escapeHtml(diag.message)}</span>
       `;
-      item.onclick = () => goToLine(err.line);
+      item.onclick = () => goToLine(diag.line);
       this.listEl.appendChild(item);
+    }
+
+    if (autoExpand && errCount > 0 && this.panelEl && this.panelEl.classList.contains('collapsed')) {
+      this.panelEl.classList.remove('collapsed');
+      const arrow = document.getElementById('error-toggle-arrow');
+      if (arrow) arrow.textContent = '▼';
     }
   }
 }
@@ -118,7 +180,7 @@ const errorPanel = document.getElementById('error-panel');
 
 const highlighter = new SyntaxHighlighter(highlightOverlay);
 const outputRenderer = new OutputRenderer(outputBody);
-const errorManager = new ErrorManager(errorList, errorCount);
+const errorManager = new ErrorManager(errorList, errorCount, errorPanel);
 const runtime = new Runtime();
 
 let saveTimeout = null;
@@ -151,11 +213,22 @@ function updateLineNumbers() {
   lineNumbers.innerHTML = lines.map((_, i) => `<div>${i + 1}</div>`).join('');
 }
 
+function getSavedSpriteMap() {
+  if (typeof window !== 'undefined' && window.__ccImages) return window.__ccImages;
+  try {
+    const raw = localStorage.getItem('crabcode_images');
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
 function scheduleHighlight() {
   clearTimeout(highlightTimeout);
   highlightTimeout = setTimeout(() => {
     const source = codeEditor.value;
     const csvDatasets = getCsvDatasets();
+    const savedSprites = getSavedSpriteMap();
     const lexer = new Lexer(source, { registry: CrabLibRegistry, csvDatasets });
     const { tokens, errors: lexErrors } = lexer.tokenize();
 
@@ -166,10 +239,21 @@ function scheduleHighlight() {
       new Set(lexer.declaredVars),
       new Set(lexer.declaredArrays),
       new Set(lexer.declaredObjects),
+      { registry: CrabLibRegistry, csvDatasets, savedSprites }
+    );
+    const { ast, errors: parseErrors } = parser.parse();
+
+    const transpiler = new Transpiler(
+      ast,
+      new Set(lexer.declaredVars),
+      new Set(lexer.declaredArrays),
+      new Set(lexer.declaredObjects),
       { registry: CrabLibRegistry, csvDatasets }
     );
-    const { errors: parseErrors } = parser.parse();
-    errorManager.setErrors([...lexErrors, ...parseErrors]);
+    const { errors: transpileErrors } = transpiler.transpile();
+
+    errorManager.clearRuntimeErrors();
+    errorManager.setErrors([...lexErrors, ...parseErrors, ...transpileErrors]);
   }, 80);
 }
 
@@ -258,11 +342,9 @@ const AutoComplete = {
     { label: 'digite',      desc: 'Campo de texto livre' },
     { label: 'pergunte',    desc: 'Card de pergunta com botão OK' },
     { label: 'tecla',       desc: 'Tecla pressionada (tecla.valor / tecla.atual)' },
-    { label: 'salve',       desc: 'Salva variável local ou na nuvem' },
-    { label: 'carregue',    desc: 'Carrega variável local ou da nuvem' },
-    { label: 'local',       desc: 'Armazenamento local (localStorage)' },
-    { label: 'nuvem',       desc: 'Armazenamento remoto via API' },
-    { label: 'usando',      desc: 'Define a chave de acesso para nuvem' },
+    { label: 'salve',       desc: 'Salva variável no navegador (salve local X)' },
+    { label: 'carregue',    desc: 'Restaura variável do navegador (carregue local X)' },
+    { label: 'local',       desc: 'Armazenamento local do navegador (localStorage)' },
   ],
 
   BUILTIN_FNS: [
